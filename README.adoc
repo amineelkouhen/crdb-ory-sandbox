@@ -81,7 +81,7 @@ Deployment templates are organized under the `main/` directory with configuratio
 
 ^.^|Amazon Web Services (AWS)
 
-a|image::main/aws/Single-Region-Multi-AZ/images/Single-Region-MAZ.svg[Basic, link="main/aws/Single-Region-Multi-AZ/Multi_Zonal_Clusters"]
+a|image::main/aws/Single-Region-Multi-AZ/images/Single-Region-MAZ.svg[Basic, link="main/aws/Single-Region-Multi-AZ"]
 a|image::images/coming_soon.png[Multi-Zonal, link="main/aws/Multi-Region-Multi-AZ"]
 
 ^.^|Google Cloud Platform (GCP)
