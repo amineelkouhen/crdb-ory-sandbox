@@ -177,7 +177,7 @@ variable "keto_write_port" {
 
 variable "organization_name" {
   description = "Organization Name"
-  default = "partner_sales"
+  default = "ory_sandbox"
 }
 
 variable "cluster_license" {
