@@ -24,6 +24,8 @@ kratos:
       public:
         port: ${PUBLIC_PORT}
     dsn: "cockroach://root@${CRDB_FQDN}:26257/kratos"
+    selfservice:
+      default_browser_return_url: ""
     identity:
       default_schema_id: default
       schemas:
