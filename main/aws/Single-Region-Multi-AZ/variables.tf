@@ -159,6 +159,14 @@ variable "kratos_release_tag" {
   default = "latest"
 }
 
+variable "kratos_admin_port" {
+  default = 4433
+}
+
+variable "kratos_public_port" {
+  default = 4434
+}
+
 variable "keto_image" {
   default = "oryd/keto"
 }
