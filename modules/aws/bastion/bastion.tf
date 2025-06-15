@@ -165,12 +165,13 @@ resource "aws_instance" "bastion" {
   sudo -H -u ${var.ssh_user} bash -c 'aws eks --region ${var.regions[0]} update-kubeconfig --name ${var.k8s_cluster_name}' >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - ✏️  Setting the CRDB endpoint in Helm Charts" >> /home/${var.ssh_user}/prepare_client.log
   sudo sed -i 's/\$${CRDB_FQDN}/${var.cluster_fqdn}/' /home/${var.ssh_user}/values_hydra.yaml
+  sudo sed -i 's/\$${CRDB_FQDN}/${var.cluster_fqdn}/' /home/${var.ssh_user}/values_kratos.yaml
   sudo sed -i 's/\$${CRDB_FQDN}/${var.cluster_fqdn}/' /home/${var.ssh_user}/values_keto.yaml
   echo "$(date) - ✏️  Setting the repositoy images/releases in Helm Charts" >> /home/${var.ssh_user}/prepare_client.log
   sudo sed -i 's@$${IMAGE}@'"${var.hydra_image}"'@' /home/${var.ssh_user}/values_hydra.yaml
   sudo sed -i 's/\$${RELEASE}/${var.hydra_release}/' /home/${var.ssh_user}/values_hydra.yaml
-  sudo sed -i 's@$${IMAGE}@'"${var.kratos_image}"'@' /home/${var.ssh_user}/values_keto.yaml
-  sudo sed -i 's/\$${RELEASE}/${var.kratos_release}/' /home/${var.ssh_user}/values_keto.yaml
+  sudo sed -i 's@$${IMAGE}@'"${var.kratos_image}"'@' /home/${var.ssh_user}/values_kratos.yaml
+  sudo sed -i 's/\$${RELEASE}/${var.kratos_release}/' /home/${var.ssh_user}/values_kratos.yaml
   sudo sed -i 's@$${IMAGE}@'"${var.keto_image}"'@' /home/${var.ssh_user}/values_keto.yaml
   sudo sed -i 's/\$${RELEASE}/${var.keto_release}/' /home/${var.ssh_user}/values_keto.yaml
   echo "$(date) - ✏️  Setting the ports in Helm Charts" >> /home/${var.ssh_user}/prepare_client.log
@@ -207,7 +208,7 @@ resource "aws_instance" "bastion" {
   sudo source /home/${var.ssh_user}/.bashrc
   echo "✅ Hydra API is up." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - 📦 Deploy Kratos in EKS ☸️" >> /home/${var.ssh_user}/prepare_client.log
-  sudo -H -u ${var.ssh_user} bash -c 'helm upgrade --install ory-kratos ory/kratos --namespace ory -f /home/${var.ssh_user}/values_hydra.yaml' >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  sudo -H -u ${var.ssh_user} bash -c 'helm upgrade --install ory-kratos ory/kratos --namespace ory -f /home/${var.ssh_user}/values_kratos.yaml' >> /home/${var.ssh_user}/prepare_client.log 2>&1
   sleep 20
   kratos_admin_hostname=$(kubectl get svc --namespace ory ory-kratos-admin --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
   kratos_public_hostname=$(kubectl get svc --namespace ory ory-kratos-public --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
