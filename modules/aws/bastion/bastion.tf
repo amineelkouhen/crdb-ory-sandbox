@@ -72,12 +72,10 @@ resource "aws_instance" "bastion" {
   sudo cp -a $packagename/lib/. /usr/local/lib/cockroach/
   sleep 10
   echo "$(date) - ✅ CRDB installation completed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  echo "$(date) - 🛠  Installing GCloud CLI ☁️" >> /home/${var.ssh_user}/prepare_client.log
+  echo "$(date) - 🛠  Installing GCloud and AWS CLI ☁️" >> /home/${var.ssh_user}/prepare_client.log
   yes | sudo snap install google-cloud-cli --classic >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  echo "$(date) - ✅ GCloud CLI installation completed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  echo "$(date) - 🛠  Installing AWS CLI ☁️" >> /home/${var.ssh_user}/prepare_client.log
   yes | sudo snap install aws-cli --classic >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  echo "$(date) - ✅ AWS CLI installation completed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  echo "$(date) - ✅ GCloud & AWS CLI installation completed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - 🛠  Installing Kubectl" >> /home/${var.ssh_user}/prepare_client.log
   sudo -H -u ${var.ssh_user} bash -c 'yes | sudo snap install kubectl --classic' >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - ✅ Kubectl installation completed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
@@ -91,10 +89,8 @@ resource "aws_instance" "bastion" {
   sudo usermod -aG docker ${var.ssh_user}
   sudo systemctl restart docker
   sudo chmod 666 /var/run/docker.sock
-  echo "$(date) - ✅ Docker installation completed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  echo "$(date) - 🛠  Installing Docker Compose" >> /home/${var.ssh_user}/prepare_client.log
   sudo apt -y install docker-compose
-  echo "$(date) - ✅ Docker compose installation completed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  echo "$(date) - ✅ Docker installation completed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - ⏳ Waiting for CRDB Cluster to respond..." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   status_code=$(curl --write-out '%%{http_code}' --silent  --output /dev/null "http://${var.cluster_fqdn}:8080")
   while [ "$status_code" != "200" ]; do
@@ -114,71 +110,48 @@ resource "aws_instance" "bastion" {
   echo "$command" >> /home/${var.ssh_user}/prepare_client.log
   sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
   echo "$(date) - ✅ CRDB Cluster license is active." >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  echo "$(date) - 📝 Create Ory Hydra Schema" >> /home/${var.ssh_user}/prepare_client.log
+  echo "$(date) - 📝 Create Ory Schemas" >> /home/${var.ssh_user}/prepare_client.log
   command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"DROP DATABASE IF EXISTS hydra; CREATE DATABASE IF NOT EXISTS hydra;\""
   sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
+  echo "$(date) - ✅ Hydra DB is created." >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"DROP DATABASE IF EXISTS kratos; CREATE DATABASE IF NOT EXISTS kratos;\""
+  sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
+  echo "$(date) - ✅ Kratos DB is created." >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"DROP DATABASE IF EXISTS keto; CREATE DATABASE IF NOT EXISTS keto;\""
+  sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
+  echo "$(date) - ✅ Keto DB is created." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   if [ ${length(var.regions)} -ge 3 ]; then
-    echo "$(date) - 🌍 Associate Regions for Hydra DB" >> /home/${var.ssh_user}/prepare_client.log
+    echo "$(date) - 🌍 Associate Regions for Ory databases" >> /home/${var.ssh_user}/prepare_client.log
     regions=(${join(" ", var.regions)})
     for i in "$${!regions[@]}"; do
       if [ $i -eq 0 ]; then
         command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE hydra SET PRIMARY REGION '$${regions[$i]}';\""
         sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-      else
-        command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE hydra ADD REGION '$${regions[$i]}';\""
-        sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-      fi
-    done
-    echo "$(date) - 🚨 Create SURVIVE REGION FAILURE for Hydra DB" >> /home/${var.ssh_user}/prepare_client.log
-    command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE hydra SURVIVE REGION FAILURE;\""
-    sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-  fi
-  echo "$(date) - ✅ Hydra DB is created." >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  echo "$(date) - 📝 Create Ory Kratos Schema" >> /home/${var.ssh_user}/prepare_client.log
-  command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"DROP DATABASE IF EXISTS kratos; CREATE DATABASE IF NOT EXISTS kratos;\""
-  sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-  if [ ${length(var.regions)} -ge 3 ]; then
-    echo "$(date) - 🌍 Associate Regions for Hydra DB" >> /home/${var.ssh_user}/prepare_client.log
-    regions=(${join(" ", var.regions)})
-    for i in "$${!regions[@]}"; do
-      if [ $i -eq 0 ]; then
         command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE kratos SET PRIMARY REGION '$${regions[$i]}';\""
         sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-      else
-        command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE kratos ADD REGION '$${regions[$i]}';\""
-        sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-      fi
-    done
-    echo "$(date) - 🚨 Create SURVIVE REGION FAILURE for Kratos DB" >> /home/${var.ssh_user}/prepare_client.log
-    command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE kratos SURVIVE REGION FAILURE;\""
-    sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-  fi
-  echo "$(date) - ✅ Kratos DB is created." >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  echo "$(date) - 📝 Create Ory Keto Schema" >> /home/${var.ssh_user}/prepare_client.log
-  command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"DROP DATABASE IF EXISTS keto; CREATE DATABASE IF NOT EXISTS keto;\""
-  sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-  if [ ${length(var.regions)} -ge 3 ]; then
-    echo "$(date) - 🌍  Associate Regions for Keto DB" >> /home/${var.ssh_user}/prepare_client.log
-    regions=(${join(" ", var.regions)})
-    for i in "$${!regions[@]}"; do
-      if [ $i -eq 0 ]; then
         command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE keto SET PRIMARY REGION '$${regions[$i]}';\""
         sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
       else
+        command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE hydra ADD REGION '$${regions[$i]}';\""
+        sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
+        command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE kratos ADD REGION '$${regions[$i]}';\""
+        sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
         command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE keto ADD REGION '$${regions[$i]}';\""
         sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
       fi
     done
-    echo "$(date) - 🚨 Create SURVIVE REGION FAILURE for Keto DB" >> /home/${var.ssh_user}/prepare_client.log
+    echo "$(date) - 🚨 Create SURVIVE REGION FAILURE for Ory databases" >> /home/${var.ssh_user}/prepare_client.log
+    command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE hydra SURVIVE REGION FAILURE;\""
+    sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
+    command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE kratos SURVIVE REGION FAILURE;\""
+    sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
     command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE keto SURVIVE REGION FAILURE;\""
     sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
   fi
-  echo "$(date) - ✅ Keto DB is created." >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  echo "$(date) - 🛠  Install Helm" >> /home/${var.ssh_user}/prepare_client.log
-  yes | sudo snap install helm --classic >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  echo "$(date) - ✅ Helm installation completed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - 👮 Activate Service Account for Ory(OEL)" >> /home/${var.ssh_user}/prepare_client.log
   sudo gcloud auth activate-service-account --key-file='/home/${var.ssh_user}/credentials.json' >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  echo "$(date) - 🛠  Install Helm" >> /home/${var.ssh_user}/prepare_client.log
+  yes | sudo snap install helm --classic >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - ➕ Add Ory (OEL) repository" >> /home/${var.ssh_user}/prepare_client.log
   yes | sudo gcloud auth configure-docker europe-docker.pkg.dev >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - ➕ Add Ory Helm Repository" >> /home/${var.ssh_user}/prepare_client.log
@@ -213,13 +186,10 @@ resource "aws_instance" "bastion" {
   sudo -H -u ${var.ssh_user} bash -c 'kubectl config set-context --current --namespace ory' >> /home/${var.ssh_user}/prepare_client.log 2>&1
   bash <(curl https://raw.githubusercontent.com/ory/meta/master/install.sh) -d -b . hydra v2.3.0
   sudo mv ./hydra /usr/local/bin/
-  echo "$(date) - ✅ Hydra CLI installation completed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   bash <(curl https://raw.githubusercontent.com/ory/meta/master/install.sh) -d -b . kratos v1.3.1
   sudo mv ./kratos /usr/local/bin/
-  echo "$(date) - ✅ Kratos CLI installation completed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   bash <(curl https://raw.githubusercontent.com/ory/meta/master/install.sh) -d -b . keto v0.14.0
   sudo mv ./keto /usr/local/bin/
-  echo "$(date) - ✅ Keto CLI installation completed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - 📦 Deploy Hydra in EKS ☸️" >> /home/${var.ssh_user}/prepare_client.log
   sudo -H -u ${var.ssh_user} bash -c 'kubectl create secret docker-registry ory-oel-gcr-secret --docker-server=europe-docker.pkg.dev --docker-username=_json_key --docker-password="$(cat /home/${var.ssh_user}/credentials.json)" --namespace ory --dry-run=client -o yaml | kubectl apply -f -' >> /home/${var.ssh_user}/prepare_client.log 2>&1
   sudo -H -u ${var.ssh_user} bash -c 'helm upgrade --install ory-oel-hydra ory/hydra --namespace ory -f /home/${var.ssh_user}/values_hydra.yaml' >> /home/${var.ssh_user}/prepare_client.log 2>&1
@@ -241,14 +211,14 @@ resource "aws_instance" "bastion" {
   sleep 20
   kratos_admin_hostname=$(kubectl get svc --namespace ory ory-kratos-admin --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
   kratos_public_hostname=$(kubectl get svc --namespace ory ory-kratos-public --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
-  echo "⏳ Waiting for Hydra API to respond..." >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  until curl -sf http://$kratos_admin_hostname:${var.hydra_admin_port}/health/alive > /dev/null; do
+  echo "⏳ Waiting for Kratos API to respond..." >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  until curl -sf http://$kratos_public_hostname:${var.kratos_public_port}/health/alive > /dev/null; do
     echo "⌛ Still waiting for Kratos API..." >> /home/${var.ssh_user}/prepare_client.log 2>&1
     sleep 10
   done
   echo "$(date) - ✏️  Setting Kratos environment variables" >> /home/${var.ssh_user}/prepare_client.log
-  echo "export KRATOS_ADMIN_URL=http://$kratos_admin_hostname:${var.hydra_admin_port}" >> /home/${var.ssh_user}/.bashrc
-  echo "export KRATOS_PUBLIC_URL=http://$kratos_public_hostname:${var.hydra_public_port}" >> /home/${var.ssh_user}/.bashrc
+  echo "export KRATOS_ADMIN_URL=http://$kratos_admin_hostname:${var.kratos_admin_port}" >> /home/${var.ssh_user}/.bashrc
+  echo "export KRATOS_PUBLIC_URL=http://$kratos_public_hostname:${var.kratos_public_port}" >> /home/${var.ssh_user}/.bashrc
   sudo source /home/${var.ssh_user}/.bashrc
   echo "✅ Kratos API is up." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - 📦 Deploy Keto in EKS ☸️" >> /home/${var.ssh_user}/prepare_client.log
