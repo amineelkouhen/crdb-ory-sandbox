@@ -191,10 +191,12 @@ Thu Jun 12 16:52:36 UTC 2025 - 💯 Client setting Completed
 You can also check that all Ory services are up by executing `kubectl get svc`
 ----
 NAME                   TYPE           CLUSTER-IP       EXTERNAL-IP                                                               PORT(S)          AGE
-ory-keto-read          LoadBalancer   172.20.196.253   a787162f2fc80462d828f10ecac85b2c-359681629.us-east-1.elb.amazonaws.com    4466:30486/TCP   6m13s
-ory-keto-write         LoadBalancer   172.20.253.187   a7200f25b0532411abf8c6ea38c1d388-371428682.us-east-1.elb.amazonaws.com    4467:31930/TCP   6m13s
-ory-oel-hydra-admin    LoadBalancer   172.20.195.225   a2189696182c94455b020230b1721dce-691944772.us-east-1.elb.amazonaws.com    4445:30850/TCP   7m59s
-ory-oel-hydra-public   LoadBalancer   172.20.26.176    a5b587d0c2b1a477a8aafbaa7a458c4a-1033217843.us-east-1.elb.amazonaws.com   4444:31742/TCP   7m59s
+ory-keto-read          LoadBalancer   172.20.252.154   a20d7e0cdab3c4bc086c15ad4e99b3ba-578912090.us-east-1.elb.amazonaws.com    4466:32018/TCP   20m
+ory-keto-write         LoadBalancer   172.20.114.76    a17754810e49d4314b7797a2f65f5031-451201736.us-east-1.elb.amazonaws.com    4467:30092/TCP   20m
+ory-kratos-admin       LoadBalancer   172.20.11.131    addef980f1fab499c9c16b2ebe0311a6-1426652526.us-east-1.elb.amazonaws.com   4433:30363/TCP   21m
+ory-kratos-public      LoadBalancer   172.20.185.210   a6d6a72c1776646379830045ccaa2bdb-1651469880.us-east-1.elb.amazonaws.com   4434:31616/TCP   21m
+ory-oel-hydra-admin    LoadBalancer   172.20.236.212   ae746b705aae34bad9795e0d83f085d3-323598019.us-east-1.elb.amazonaws.com    4445:32070/TCP   22m
+ory-oel-hydra-public   LoadBalancer   172.20.128.144   a78f38833d17a4b6394cf687abebd8c9-546060028.us-east-1.elb.amazonaws.com    4444:32404/TCP   22m
 ----
 
 Congratulations 🎉 Now, you can start testing Ory capabilities. All environment variables required for Ory components are pre-configured for testing.
@@ -300,7 +302,318 @@ $ hydra introspect token --format json-pretty --endpoint $HYDRA_ADMIN_URL ory_at
 
 ==== ✅ Kratos
 
-Coming Soon
+Kratos stores user identity records, recovery flows, sessions, and login attempts in transactional tables.
+
+Each identity can be associated with one or more credentials, stored in the identity_credentials table. These credentials define how a user authenticates with the system, such as through a password, social login, or other mechanisms.
+
+Ory Identities implements flows that users perform themselves as opposed to administrative intervention. Facebook and Google both provide self-service registration and profile management features as you are able to make changes to your profile and sign up yourself. Ory Identities implements the following flows:
+
+- Registration
+- Login
+- Logout
+- User Settings
+- Account Recovery
+- Address Verification
+- User-Facing Error
+- 2FA / MFA
+
+Let's assume the Registration flow of Kratos. The Registration Flow for API clients doesn't use HTTP Redirects and can be summarized as follows:
+
+image::images/registration.png[registration]
+
+To initialize the API flow, the client calls the API-flow initialization endpoint which returns a JSON response. All you need is a valid Registration Flow ID:
+
+[source,bash]
+----
+$ flowId=$(curl -s -X GET -H "Accept: application/json" $KRATOS_PUBLIC_URL/self-service/registration/api | jq -r '.id')
+----
+
+Then you can submit the registration form using the following payload:
+
+[source,bash]
+----
+curl -s -X POST -H "Accept: application/json Content-Type: application/json" $KRATOS_PUBLIC_URL/self-service/registration?flow=$flowId -d '{
+  "method": "password",
+  "password": "HelloCockro@ch123",
+  "traits": {
+        "email": "amine.elkouhen@cockroachlabs.com",
+        "name": {
+            "first": "Amine M.",
+            "last": "Kouhen"
+        }
+  }
+}'
+
+----
+
+Ory Identities responds with a JSON payload which includes the signed up identity:
+
+[source,json]
+----
+{
+    "identity": {
+        "id": "3ad9fe8b-ef2e-4fa4-8f3e-4b959ace03e6",
+        "schema_id": "default",
+        "schema_url": "http://ory-kratos-5f7474c79c-wgv9p:4434/schemas/ZGVmYXVsdA",
+        "state": "active",
+        "state_changed_at": "2025-06-15T22:28:38.743591684Z",
+        "traits": {
+            "email": "amine.elkouhen@cockroachlabs.com",
+            "name": {
+                "first": "Amine M.",
+                "last": "Kouhen"
+            }
+        },
+        "metadata_public": null,
+        "created_at": "2025-06-15T22:28:38.747278Z",
+        "updated_at": "2025-06-15T22:28:38.747278Z",
+        "organization_id": null
+    },
+    "continue_with": null
+}
+----
+
+Completing the registration, you can now start the login flow by fetching the Login Flow. All you need is a valid flow ID:
+
+[source,bash]
+----
+$ flowId=$(curl -s -X GET -H  "Accept: application/json Content-Type: application/json" $KRATOS_PUBLIC_URL/self-service/login/api | jq -r '.id')
+----
+
+Then you can submit the login form using the following payload, first with a wrong password:
+
+[source,bash]
+----
+$ curl -s -X POST -H  "Accept: application/json" -H "Content-Type: application/json" $KRATOS_PUBLIC_URL/self-service/login?flow=$flowId \
+    -d '{"identifier": "amine.elkouhen@cockroachlabs.com", "password": "the-wrong-password", "method": "password"}'
+----
+
+The server typically responds with HTTP 400 Bad Request and the Login Flow in the response payload as JSON. You will get the following validation errors `The provided credentials are invalid, check for spelling mistakes in your password or username, email address, or phone number.`:
+
+[source,json]
+----
+{
+    "id": "1532c85f-74a5-4c80-82b4-252b9a25eb7f",
+    "organization_id": null,
+    "type": "api",
+    "expires_at": "2025-06-15T23:39:24.138178Z",
+    "issued_at": "2025-06-15T22:39:24.138178Z",
+    "request_url": "http://a6d6a72c1776646379830045ccaa2bdb-1651469880.us-east-1.elb.amazonaws.com:4434/self-service/login/api",
+    "ui": {
+        "action": "http://ory-kratos-5f7474c79c-wgv9p:4434/self-service/login?flow=1532c85f-74a5-4c80-82b4-252b9a25eb7f",
+        "method": "POST",
+        "nodes": [
+            {
+                "type": "input",
+                "group": "default",
+                "attributes": {
+                    "name": "csrf_token",
+                    "type": "hidden",
+                    "value": "",
+                    "required": true,
+                    "disabled": false,
+                    "node_type": "input"
+                },
+                "messages": [],
+                "meta": {}
+            },
+            {
+                "type": "input",
+                "group": "default",
+                "attributes": {
+                    "name": "identifier",
+                    "type": "text",
+                    "value": "amine.elkouhen@cockroachlabs.com",
+                    "required": true,
+                    "disabled": false,
+                    "node_type": "input"
+                },
+                "messages": [],
+                "meta": {
+                    "label": {
+                        "id": 1070002,
+                        "text": "E-Mail",
+                        "type": "info",
+                        "context": {
+                            "title": "E-Mail"
+                        }
+                    }
+                }
+            },
+            {
+                "type": "input",
+                "group": "password",
+                "attributes": {
+                    "name": "password",
+                    "type": "password",
+                    "required": true,
+                    "autocomplete": "current-password",
+                    "disabled": false,
+                    "node_type": "input"
+                },
+                "messages": [],
+                "meta": {
+                    "label": {
+                        "id": 1070001,
+                        "text": "Password",
+                        "type": "info"
+                    }
+                }
+            },
+            {
+                "type": "input",
+                "group": "password",
+                "attributes": {
+                    "name": "method",
+                    "type": "submit",
+                    "value": "password",
+                    "disabled": false,
+                    "node_type": "input"
+                },
+                "messages": [],
+                "meta": {
+                    "label": {
+                        "id": 1010022,
+                        "text": "Sign in with password",
+                        "type": "info"
+                    }
+                }
+            }
+        ],
+        "messages": [
+            {
+                "id": 4000006,
+                "text": "The provided credentials are invalid, check for spelling mistakes in your password or username, email address, or phone number.",
+                "type": "error"
+            }
+        ]
+    },
+    "created_at": "2025-06-15T22:39:24.234661Z",
+    "updated_at": "2025-06-15T22:39:24.234661Z",
+    "refresh": false,
+    "requested_aal": "aal1",
+    "state": "choose_method"
+}
+----
+
+Let's try with a valid password and submit the login flow:
+
+[source,bash]
+----
+$ curl -s -X POST -H  "Accept: application/json" -H "Content-Type: application/json" $KRATOS_PUBLIC_URL/self-service/login?flow=$flowId \
+    -d '{"identifier": "amine.elkouhen@cockroachlabs.com", "password": "HelloCockro@ch123", "method": "password"}'
+----
+
+Ory Identities responds with a JSON payload which includes the identity which just authenticated, the session, and the Ory Session Token:
+
+[source,json]
+----
+{
+    "session_token": "ory_st_l209ZOnRSEaQRcIauchAUdFC5iYQDQld",
+    "session": {
+        "id": "fd4bde12-1c3d-4c95-a45f-337c6bdd6905",
+        "active": true,
+        "expires_at": "2025-06-16T22:50:12.810367548Z",
+        "authenticated_at": "2025-06-15T22:50:12.810367548Z",
+        "authenticator_assurance_level": "aal1",
+        "authentication_methods": [
+            {
+                "method": "password",
+                "aal": "aal1",
+                "completed_at": "2025-06-15T22:50:12.810362223Z"
+            }
+        ],
+        "issued_at": "2025-06-15T22:50:12.810367548Z",
+        "identity": {
+            "id": "3ad9fe8b-ef2e-4fa4-8f3e-4b959ace03e6",
+            "schema_id": "default",
+            "schema_url": "http://ory-kratos-5f7474c79c-wgv9p:4434/schemas/ZGVmYXVsdA",
+            "state": "active",
+            "state_changed_at": "2025-06-15T22:28:38.743591Z",
+            "traits": {
+                "email": "amine.elkouhen@cockroachlabs.com",
+                "name": {
+                    "first": "Amine M.",
+                    "last": "Kouhen"
+                }
+            },
+            "metadata_public": null,
+            "created_at": "2025-06-15T22:28:38.747278Z",
+            "updated_at": "2025-06-15T22:28:38.747278Z",
+            "organization_id": null
+        },
+        "devices": [
+            {
+                "id": "da0ccae2-9865-4ff7-b8b3-1f3f4808327e",
+                "ip_address": "10.2.3.40:54026",
+                "user_agent": "curl/8.5.0",
+                "location": ""
+            }
+        ]
+    },
+    "continue_with": null
+}
+----
+
+The Ory Session Token can be checked at the `http://$KRATOS_PUBLIC_URL/sessions/whoami` endpoint using the session token returned earlier (`ory_st_l209ZOnRSEaQRcIauchAUdFC5iYQDQld`):
+
+[source,bash]
+----
+$ curl -s -X GET -H "Accept: application/json" -H "Authorization: Bearer ory_st_l209ZOnRSEaQRcIauchAUdFC5iYQDQld" $KRATOS_PUBLIC_URL/sessions/whoami
+----
+[source,json]
+----
+{
+    "id": "fd4bde12-1c3d-4c95-a45f-337c6bdd6905",
+    "active": true,
+    "expires_at": "2025-06-16T22:50:12.810367Z",
+    "authenticated_at": "2025-06-15T22:50:12.810367Z",
+    "authenticator_assurance_level": "aal1",
+    "authentication_methods": [
+        {
+            "method": "password",
+            "aal": "aal1",
+            "completed_at": "2025-06-15T22:50:12.810362223Z"
+        }
+    ],
+    "issued_at": "2025-06-15T22:50:12.810367Z",
+    "identity": {
+        "id": "3ad9fe8b-ef2e-4fa4-8f3e-4b959ace03e6",
+        "schema_id": "default",
+        "schema_url": "http://ory-kratos-5f7474c79c-wgv9p:4434/schemas/ZGVmYXVsdA",
+        "state": "active",
+        "state_changed_at": "2025-06-15T22:28:38.743591Z",
+        "traits": {
+            "email": "amine.elkouhen@cockroachlabs.com",
+            "name": {
+                "first": "Amine M.",
+                "last": "Kouhen"
+            }
+        },
+        "metadata_public": null,
+        "created_at": "2025-06-15T22:28:38.747278Z",
+        "updated_at": "2025-06-15T22:28:38.747278Z",
+        "organization_id": null
+    },
+    "devices": [
+        {
+            "id": "da0ccae2-9865-4ff7-b8b3-1f3f4808327e",
+            "ip_address": "10.2.3.40:54026",
+            "user_agent": "curl/8.5.0",
+            "location": ""
+        }
+    ]
+}
+----
+
+To logout the session, you can revoke the ory session token by calling the logout API endpoint:
+
+[source,bash]
+----
+$ curl -s -X DELETE -H "Accept: application/json" -H "Content-Type: application/json" $KRATOS_PUBLIC_URL/self-service/logout/api -d '{
+  "session_token": "ory_st_l209ZOnRSEaQRcIauchAUdFC5iYQDQld"
+}'
+----
 
 ==== ✅ Keto (Authorization Engine)
 
