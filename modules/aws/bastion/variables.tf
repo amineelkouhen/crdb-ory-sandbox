@@ -104,6 +104,16 @@ variable "kratos_release" {
   type        = string
 }
 
+variable "kratos_admin_port" {
+  description = "Admin port for Ory Kratos"
+  type        = number
+}
+
+variable "kratos_public_port" {
+  description = "Public port for Ory Kratos"
+  type        = number
+}
+
 variable "keto_image" {
   description = "Repository image for Ory Keto"
   type        = string

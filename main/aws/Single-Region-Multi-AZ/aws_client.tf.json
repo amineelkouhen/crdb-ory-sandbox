@@ -43,6 +43,8 @@
             "hydra_public_port": "${var.hydra_public_port}",
             "kratos_image": "${var.kratos_image}",
             "kratos_release": "${var.keto_release_tag}",
+            "kratos_admin_port": "${var.kratos_admin_port}",
+            "kratos_public_port": "${var.kratos_public_port}",
             "keto_image": "${var.keto_image}",
             "keto_release": "${var.keto_release_tag}",
             "keto_read_port": "${var.keto_read_port}",

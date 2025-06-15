@@ -9,12 +9,12 @@ service:
     enabled: true
     type: LoadBalancer
     port: ${PUBLIC_PORT}
-    name: http
+    name: hydra-http-public
   admin:
     enabled: true
     type: LoadBalancer
     port: ${ADMIN_PORT}
-    name: http
+    name: hydra-http-admin
 maester:
   enabled: false
 hydra:

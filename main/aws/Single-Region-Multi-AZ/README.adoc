@@ -2,15 +2,15 @@
 
 This configuration generates a high-availability deployment for the joint sandbox within a single cloud region. This architecture is designed to protect against failures at the availability zone (AZ) level by distributing nodes of the database cluster across multiple AZs within the same region.
 
-As illustrated in the following diagram, a single cloud region is shown containing three distinct Availability Zones: AZ1, AZ2, and AZ3. Each AZ is an isolated failure domain with its own independent power, cooling, and networking. By deploying nodes of the Ory / CRDB clusters across all three zones, the system ensures resilience against localized outages. If one AZ becomes unavailable due to a hardware or network issue, the remaining two zones continue to serve client requests without data loss or downtime.
+As illustrated in the following diagram, a single cloud region is shown containing three distinct Availability Zones: `us-east-1a`, `us-east-1b`, and `us-east-1c`. Each Availability Zone is an isolated failure domain with its own independent power, cooling, and networking. By deploying nodes of the Ory / CRDB clusters across all three zones, the system ensures resilience against localized outages. If one AZ becomes unavailable due to a hardware or network issue, the remaining two zones continue to serve client requests without data loss or downtime.
 
 image::images/Single-Region-MAZ.svg[Regional Multi-Zonal Configuration]
 
-Let's start with bottom of the diagram (CRDB VPC): The CockroachDB nodes in each zone form a single logical cluster that replicates data across zones using the consensus protocol (typically Raft).
+Let's start with bottom of the diagram (`CRDB VPC`): The CockroachDB nodes in each zone form a single logical cluster that replicates data across zones using the consensus protocol (typically Raft).
 
 A regional load balancer distributes traffic across the healthy nodes in the cluster. This NLB improves performance by directing requests to the closest responsive node and provides failover capabilities by rerouting traffic away from any failed or unreachable zones.
 
-At the top of the diagram (Ory VPC), Ory is deployed as a Kubernetes cluster (in EKS). The workers are created in each zone and form a single logical cluster. Each Ory component (Hydra, Kratos or Keto) is replicated as pods and distributed across the EKS cluster to provide failover capabilities and remain highly available.
+At the top of the diagram (`Ory VPC`), Ory is deployed as a Kubernetes cluster (in EKS). The workers are created in each zone and form a single logical cluster. Each Ory component (*_Hydra_*, *_Kratos_* or *_Keto_*) is replicated as pods and distributed across the EKS cluster to provide failover capabilities and remain highly available.
 
 This replication model ensures strong consistency — all nodes maintain a synchronized and always-on service. Even in the event of zone-level failure, the remaining pods/nodes - for both clusters - ensures that the solution remains available and consistent.
 
