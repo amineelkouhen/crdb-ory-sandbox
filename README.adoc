@@ -16,7 +16,7 @@ image:https://img.shields.io/github/license/{project-owner}/{project-name}[Licen
 image::images/banner.png[banner]
 ---
 
-This project provides a comprehensive set of *Terraform* templates to provision a joint *Ory* and *CockroachDB* proof-of-concept (PoC) environment on multiple cloud providers. The goal is to demonstrate a resilient, distributed IAM architecture that combines Ory's identity stack with CockroachDB's globally consistent SQL database.
+This project provides a comprehensive set of *Terraform* templates to provision a joint *Ory* and *CockroachDB* proof-of-concept (PoC) environment on AWS. The goal is to demonstrate a resilient, distributed IAM architecture that combines Ory's identity stack with CockroachDB's globally consistent SQL database.
 
 == 📋 Prerequisites
 
@@ -70,31 +70,32 @@ image::images/fig4_Ory_CockroachDB_multi_region_deployment_architecture.png[Ory-
 
 From a technical standpoint, identity and authorization in this system are modeled as structured entities within CockroachDB. The use of CockroachDB’s strongly consistent transactions ensures that IAM operations remain correct, even when issued concurrently from different regions or under network duress.
 
-== 📦 Deployment Options
+== 📦 Deployment
 
-Deployment templates are organized under the `main/` directory with configurations for various cloud providers:
+This configuration generates a high-availability deployment for the joint sandbox within a single cloud region. This architecture is designed to protect against failures at the availability zone (AZ) level by distributing nodes of the database cluster across multiple AZs within the same region.
 
-[cols="25h,~,~"]
-|===
-^.^h|Cloud Provider
-^.^h|Single-Region Deployment ^.^h|Multi-Region Deployment
+As illustrated in the following diagram, a single cloud region is shown containing three distinct Availability Zones: `us-east-1a`, `us-east-1b`, and `us-east-1c`. Each Availability Zone is an isolated failure domain with its own independent power, cooling, and networking. By deploying nodes of the Ory / CRDB clusters across all three zones, the system ensures resilience against localized outages. If one AZ becomes unavailable due to a hardware or network issue, the remaining two zones continue to serve client requests without data loss or downtime.
 
-^.^|Amazon Web Services (AWS)
+image::main/aws/Single-Region-Multi-AZ/images/Single-Region-MAZ.svg[Single-Region Multi-AZ Configuration]
 
-a|image::main/aws/Single-Region-Multi-AZ/images/Single-Region-MAZ.svg[Basic, link="main/aws/Single-Region-Multi-AZ"]
-a|image::main/aws/Multi-Region-Multi-AZ/images/Multi-Region-Multi-AZ.svg[Multi-Zonal, link="main/aws/Multi-Region-Multi-AZ"]
+Let's start with bottom of the diagram (`CRDB VPC`): The CockroachDB nodes in each zone form a single logical cluster that replicates data across zones using the consensus protocol (typically Raft).
 
-^.^|Google Cloud Platform (GCP)
+A regional load balancer distributes traffic across the healthy nodes in the cluster. This NLB improves performance by directing requests to the closest responsive node and provides failover capabilities by rerouting traffic away from any failed or unreachable zones.
 
-a|image::images/coming_soon.png[Basic Cluster, link=""]
-a|image::images/coming_soon.png[Basic Cluster, link=""]
+At the top of the diagram (`Ory VPC`), Ory is deployed as a Kubernetes cluster (in EKS). The workers are created in each zone and form a single logical cluster. Each Ory component (*_Hydra_*, *_Kratos_* or *_Keto_*) is replicated as pods and distributed across the EKS cluster to provide failover capabilities and remain highly available.
 
-^.^|Microsoft Azure
+This replication model ensures strong consistency — all nodes maintain a synchronized and always-on service. Even in the event of zone-level failure, the remaining pods/nodes - for both clusters - ensures that the solution remains available and consistent.
 
-a|image::images/coming_soon.png[Basic Cluster, link=""]
-a|image::images/coming_soon.png[Basic Cluster, link=""]
+This results in a seamless experience for end users, with low latency and high uptime.
 
-|===
+Based on the architecture described above, we set up the infrastructure for both Ory and CockroachDB within the us-east-1 region.
+
+1- For the CockroachDB deployment, we created a VPC in region (`us-east-1`) with three subnets, distributed across distinct Availability Zones. The CockroachDB cluster itself consists of three nodes, each deployed in a separate AZ to enable fault tolerance and quorum-based consistency. A Network Load Balancer (NLB) sits in front of the cluster to evenly route incoming requests to the appropriate database node.
+
+2- For Ory, we provisioned a separate Virtual Private Cloud (VPC) in the same region (`us-east-1`), also using three subnets, each placed in a different Availability Zone to ensure high availability. An Amazon EKS (Elastic Kubernetes Service) cluster was deployed with three worker nodes — one in each AZ—to distribute the workload evenly.
+For the purposes of this proof of concept, the EKS cluster is publicly accessible, and the service ports are exposed via a load balancer. All Ory components — Hydra, Kratos, and Keto — are configured to connect to the CockroachDB cluster through the NLB, ensuring consistent and resilient backend access.
+
+3- Additionally, we provisioned a Bastion Host in the `us-west-2` region, located in its own VPC and subnet. This host serves as a control and testing environment, preconfigured with everything needed to simulate and interact with Ory’s components. It includes SDKs, container images, authentication credentials, and benchmarking tools to test and validate the system’s behavior under real-world scenarios.
 
 === 🚀 Usage Guide
 
@@ -733,4 +734,3 @@ ory-cluster-name = "amine-us-ory-cluster"
 
 - Add demo tooling and simulators for Kratos and Hydra (the https://github.com/viragtripathi/crdb-ory-keto-demo[Keto load simulator^] is already done by Chatur 👲🏾)
 - Automate certification test suite
-- Extend support to GCP and Azure
