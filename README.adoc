@@ -52,7 +52,7 @@ Each service is stateless and communicates with CockroachDB as its persistent da
 
 image::images/fig1_Ory_Architecture_Overview.png[Ory]
 
-== 🤝 Ory/CockroachDB joint architecture
+== 🤝 Ory/CockroachDB Joint Architecture
 
 The PoC environment integrates:
 
