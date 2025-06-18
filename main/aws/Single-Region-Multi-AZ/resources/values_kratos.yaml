@@ -2,6 +2,8 @@ image:
   repository: ${IMAGE}
   tag: ${RELEASE}
   pullPolicy: IfNotPresent
+imagePullSecrets:
+  - name: ory-oel-gcr-secret
 service:
   admin:
     enabled: true

@@ -120,34 +120,6 @@ resource "aws_instance" "bastion" {
   command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"DROP DATABASE IF EXISTS keto; CREATE DATABASE IF NOT EXISTS keto;\""
   sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
   echo "$(date) - ✅ Keto DB is created." >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  if [ ${length(var.regions)} -ge 3 ]; then
-    echo "$(date) - 🌍 Associate Regions for Ory databases" >> /home/${var.ssh_user}/prepare_client.log
-    regions=(${join(" ", var.regions)})
-    for i in "$${!regions[@]}"; do
-      if [ $i -eq 0 ]; then
-        command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE hydra SET PRIMARY REGION '$${regions[$i]}';\""
-        sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-        command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE kratos SET PRIMARY REGION '$${regions[$i]}';\""
-        sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-        command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE keto SET PRIMARY REGION '$${regions[$i]}';\""
-        sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-      else
-        command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE hydra ADD REGION '$${regions[$i]}';\""
-        sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-        command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE kratos ADD REGION '$${regions[$i]}';\""
-        sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-        command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE keto ADD REGION '$${regions[$i]}';\""
-        sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-      fi
-    done
-    echo "$(date) - 🚨 Create SURVIVE REGION FAILURE for Ory databases" >> /home/${var.ssh_user}/prepare_client.log
-    command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE hydra SURVIVE REGION FAILURE;\""
-    sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-    command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE kratos SURVIVE REGION FAILURE;\""
-    sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-    command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"ALTER DATABASE keto SURVIVE REGION FAILURE;\""
-    sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
-  fi
   echo "$(date) - 👮 Activate Service Account for Ory(OEL)" >> /home/${var.ssh_user}/prepare_client.log
   sudo gcloud auth activate-service-account --key-file='/home/${var.ssh_user}/credentials.json' >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - 🛠  Install Helm" >> /home/${var.ssh_user}/prepare_client.log
@@ -193,10 +165,10 @@ resource "aws_instance" "bastion" {
   sudo mv ./keto /usr/local/bin/
   echo "$(date) - 📦 Deploy Hydra in EKS ☸️" >> /home/${var.ssh_user}/prepare_client.log
   sudo -H -u ${var.ssh_user} bash -c 'kubectl create secret docker-registry ory-oel-gcr-secret --docker-server=europe-docker.pkg.dev --docker-username=_json_key --docker-password="$(cat /home/${var.ssh_user}/credentials.json)" --namespace ory --dry-run=client -o yaml | kubectl apply -f -' >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  sudo -H -u ${var.ssh_user} bash -c 'helm upgrade --install ory-oel-hydra ory/hydra --namespace ory -f /home/${var.ssh_user}/values_hydra.yaml' >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  sudo -H -u ${var.ssh_user} bash -c 'helm upgrade --install ory-hydra ory/hydra --namespace ory -f /home/${var.ssh_user}/values_hydra.yaml' >> /home/${var.ssh_user}/prepare_client.log 2>&1
   sleep 20
-  hydra_admin_hostname=$(kubectl get svc --namespace ory ory-oel-hydra-admin --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
-  hydra_public_hostname=$(kubectl get svc --namespace ory ory-oel-hydra-public --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
+  hydra_admin_hostname=$(kubectl get svc --namespace ory ory-hydra-admin --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
+  hydra_public_hostname=$(kubectl get svc --namespace ory ory-hydra-public --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
   echo "⏳ Waiting for Hydra API to respond..." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   until curl -sf http://$hydra_admin_hostname:${var.hydra_admin_port}/health/alive > /dev/null; do
     echo "⌛ Still waiting for Hydra API..." >> /home/${var.ssh_user}/prepare_client.log 2>&1
@@ -205,7 +177,6 @@ resource "aws_instance" "bastion" {
   echo "$(date) - ✏️  Setting Hydra environment variables" >> /home/${var.ssh_user}/prepare_client.log
   echo "export HYDRA_ADMIN_URL=http://$hydra_admin_hostname:${var.hydra_admin_port}" >> /home/${var.ssh_user}/.bashrc
   echo "export HYDRA_PUBLIC_URL=http://$hydra_public_hostname:${var.hydra_public_port}" >> /home/${var.ssh_user}/.bashrc
-  sudo source /home/${var.ssh_user}/.bashrc
   echo "✅ Hydra API is up." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - 📦 Deploy Kratos in EKS ☸️" >> /home/${var.ssh_user}/prepare_client.log
   sudo -H -u ${var.ssh_user} bash -c 'helm upgrade --install ory-kratos ory/kratos --namespace ory -f /home/${var.ssh_user}/values_kratos.yaml' >> /home/${var.ssh_user}/prepare_client.log 2>&1
@@ -220,7 +191,6 @@ resource "aws_instance" "bastion" {
   echo "$(date) - ✏️  Setting Kratos environment variables" >> /home/${var.ssh_user}/prepare_client.log
   echo "export KRATOS_ADMIN_URL=http://$kratos_admin_hostname:${var.kratos_admin_port}" >> /home/${var.ssh_user}/.bashrc
   echo "export KRATOS_PUBLIC_URL=http://$kratos_public_hostname:${var.kratos_public_port}" >> /home/${var.ssh_user}/.bashrc
-  sudo source /home/${var.ssh_user}/.bashrc
   echo "✅ Kratos API is up." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - 📦 Deploy Keto in EKS ☸️" >> /home/${var.ssh_user}/prepare_client.log
   sudo -H -u ${var.ssh_user} bash -c 'helm upgrade --install ory-keto ory/keto -f /home/${var.ssh_user}/values_keto.yaml --namespace ory' >> /home/${var.ssh_user}/prepare_client.log 2>&1
