@@ -76,6 +76,9 @@ resource "aws_instance" "bastion" {
   yes | sudo snap install google-cloud-cli --classic >> /home/${var.ssh_user}/prepare_client.log 2>&1
   yes | sudo snap install aws-cli --classic >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - ✅ GCloud & AWS CLI installation completed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  yes | sudo sudo snap install go --classic >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  sudo go get -u golang.org/x/sys
+  echo "$(date) - ✅ Golang installation completed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - 🛠  Installing Kubectl" >> /home/${var.ssh_user}/prepare_client.log
   sudo -H -u ${var.ssh_user} bash -c 'yes | sudo snap install kubectl --classic' >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - ✅ Kubectl installation completed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
@@ -207,6 +210,25 @@ resource "aws_instance" "bastion" {
   echo "export KETO_READ_REMOTE=http://$keto_read_hostname:${var.keto_read_port}" >> /home/${var.ssh_user}/.bashrc
   eval "$(cat /home/${var.ssh_user}/.bashrc | tail -n +10)"
   echo "✅ Keto API is up." >> /home/${var.ssh_user}/prepare_client.log 2>&1
+
+  ################
+  # Clone the demo repository
+  echo "$(date) - Clone the workload simulator repository ${var.simulator_repository}" >> /home/${var.ssh_user}/prepare_client.log
+  repository="${var.simulator_repository}"
+  cd /home/${var.ssh_user}
+  command="git clone $repository"
+  sudo -H -u ${var.ssh_user} bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  echo "$command" >> /home/${var.ssh_user}/prepare_client.log
+  echo "$(date) - Prepare config file" >> /home/${var.ssh_user}/prepare_client.log
+  sudo sed -i 's@$${HYDRA_ADMIN}@'"http://$hydra_admin_hostname:${var.hydra_admin_port}"'@' /home/${var.ssh_user}/crdb-ory-load-test/config/config.yaml
+  sudo sed -i 's@$${HYDRA_PUBLIC}@'"http://$hydra_public_hostname:${var.hydra_public_port}"'@' /home/${var.ssh_user}/crdb-ory-load-test/config/config.yaml
+  sudo sed -i 's@$${KRATOS_ADMIN}@'"http://$kratos_admin_hostname:${var.kratos_admin_port}"'@' /home/${var.ssh_user}/crdb-ory-load-test/config/config.yaml
+  sudo sed -i 's@$${KRATOS_PUBLIC}@'"http://$kratos_public_hostname:${var.kratos_public_port}"'@' /home/${var.ssh_user}/crdb-ory-load-test/config/config.yaml
+  sudo sed -i 's@$${KETO_WRITE}@'"http://$keto_write_hostname:${var.keto_write_port}"'@' /home/${var.ssh_user}/crdb-ory-load-test/config/config.yaml
+  sudo sed -i 's@$${KETO_READ}@'"http://$keto_read_hostname:${var.keto_read_port}"'@' /home/${var.ssh_user}/crdb-ory-load-test/config/config.yaml
+  sleep 5
+  cd /home/${var.ssh_user}/crdb-ory-load-test
+  sudo -H -u ${var.ssh_user} bash -c 'make clean build' >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - 💯 Client setting Completed" >> /home/${var.ssh_user}/prepare_client.log
   EOF
 

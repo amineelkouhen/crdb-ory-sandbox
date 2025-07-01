@@ -139,6 +139,11 @@ variable "k8s_cluster_name" {
   type        = string
 }
 
+variable "simulator_repository" {
+  description = "workload simulator repository"
+  type        = string
+}
+
 variable "dependencies" {
   type        = list
 }
