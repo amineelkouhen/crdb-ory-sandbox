@@ -97,7 +97,7 @@ variable "crdb_release" {
 }
 
 variable "crdb_machine_type" {
-  default = "m5.large"
+  default = "m5.xlarge"
 }
 
 variable "crdb_machine_images" {
@@ -140,7 +140,7 @@ variable "hydra_image" {
 }
 
 variable "hydra_release_tag" {
-  default = "latest"
+  default = "19fae4f763fa139db38db601000cb80b53ebde4d"
 }
 
 variable "hydra_admin_port" {
@@ -152,11 +152,11 @@ variable "hydra_public_port" {
 }
 
 variable "kratos_image" {
-  default = "oryd/kratos" //http://europe-docker.pkg.dev/ory-artifacts/ory-enterprise-kratos/kratos-oel
+  default = "europe-docker.pkg.dev/ory-artifacts/ory-enterprise-kratos/kratos-oel"
 }
 
 variable "kratos_release_tag" {
-  default = "latest"
+  default = "19fae4f763fa139db38db601000cb80b53ebde4d"
 }
 
 variable "kratos_admin_port" {
@@ -172,7 +172,7 @@ variable "keto_image" {
 }
 
 variable "keto_release_tag" {
-  default = "latest"
+  default = "v0.14.0"
 }
 
 variable "keto_read_port" {
@@ -181,6 +181,10 @@ variable "keto_read_port" {
 
 variable "keto_write_port" {
   default = 4467
+}
+
+variable "ory_simulator_repository" {
+  default = "https://github.com/amineelkouhen/crdb-ory-load-test"
 }
 
 variable "organization_name" {
