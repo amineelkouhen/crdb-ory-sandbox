@@ -730,7 +730,54 @@ ory-cluster-endpoint = "https://3545FA6F561797A27DFD79508CA391D4.gr7.us-east-1.e
 ory-cluster-name = "amine-us-ory-cluster"
 ....
 
-=== 🗂 To-Do List (In Progress)
+=== 🧪 Test your sandbox
 
-- Add demo tooling and simulators for Kratos and Hydra (the https://github.com/viragtripathi/crdb-ory-keto-demo[Keto load simulator^] is already done by Chatur 👲🏾)
-- Automate certification test suite
+Once your environment is set, you can simulate traffic to the Ory applications using the [Workload Simulator](https://github.com/amineelkouhen/crdb-ory-load-test) - already integrated in the client.
+
+[source,bash]
+----
+./crdb-ory-load-test \
+  --duration-sec=60 \
+  --read-ratio=100 \
+  --workload-config=config/config.yaml \
+  --log-file=run.log
+  --scope=hydra
+----
+
+You can load test each application alone, by setting --scope to `hydra`, `kratos` or `keto`. You can also simulate the three components by setting scope to `all`
+
+Happy benchmarking! 🧪📈
+
+==== 📊 What Does `read_ratio Do?
+
+This option controls *how many reads per write*:
+
+[source,yaml]
+----
+read_ratio: 100
+----
+
+`read_ratio controls how many reads are triggered per write. In the example above, for every 1 write, the workload will perform approximately 100 read operations.
+
+This simulates *real-world workloads*, where reads vastly outnumber writes.
+
+Results include detailed breakdowns:
+
+----
+🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧
+✅  Kratos Load generation and identity checks complete
+⏱️  Duration:                10s
+⚙️  Concurrency:             101
+🚦  Checks/sec:              89.8
+🧪  Mode:                    LIVE
+🟢  Active:                  898
+🔴  Inactive:                0
+✏️  Writes:                  10
+👁️  Reads:                   898
+📊  Read/Write ratio:        89.8:1
+🚨  Failed writes to Kratos: 0
+🚨  Failed reads to Kratos:  0
+🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧🚧
+----
+
+'''
