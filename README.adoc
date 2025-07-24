@@ -732,7 +732,7 @@ ory-cluster-name = "amine-us-ory-cluster"
 
 === 🧪 Test your sandbox
 
-Once your environment is set, you can simulate traffic to the Ory applications using the [Workload Simulator](https://github.com/amineelkouhen/crdb-ory-load-test) - already integrated in the client.
+Once your environment is set, you can simulate traffic to the Ory applications using the https://github.com/amineelkouhen/crdb-ory-load-test[Workload Simulator^] - already integrated in the client.
 
 [source,bash]
 ----
