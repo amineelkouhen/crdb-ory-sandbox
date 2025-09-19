@@ -184,7 +184,7 @@ client-public-IP = "a.b.c.d"
 ----
 $ ssh -i ~/.ssh/id_rsa ubuntu@a.b.c.d
 ----
-2- Check setup status via `/home/ubuntu/prepare_client.log`. Wait till you have the following massage:
+2- Check setup status via `/home/ubuntu/prepare_client.log`. Wait till you have the following message:
 ----
 Thu Jun 12 16:52:36 UTC 2025 - 💯 Client setting Completed
 ----
@@ -709,7 +709,7 @@ client-public-IP = "52.40.254.77"
 ####################################### CRDB Cluster #################################
 
 console-url = "http://amine.cluster.sko-iam-demo.com:8080/"
-connexion-string = "postgresql://root@amine.cluster.sko-iam-demo.com:26257/defaultdb"
+connection-string = "postgresql://root@amine.cluster.sko-iam-demo.com:26257/defaultdb"
 console-url = "http://nlb-2025061115420336750000000b-6069ff0a543288f4.elb.us-east-1.amazonaws.com:8080/"
 crdb-cluster-nlb-dns = "nlb-2025061115420336750000000b-6069ff0a543288f4.elb.us-east-1.amazonaws.com"
 
