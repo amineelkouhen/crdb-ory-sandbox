@@ -88,7 +88,7 @@
         "console-url": {
             "value": "http://${module.network-vpc.nlb_dns_name}:8080/"
         },
-        "connexion-string": {
+        "connection-string": {
             "value": "postgresql://root@${module.network-vpc.nlb_dns_name}:26257/defaultdb"
         }
     }
