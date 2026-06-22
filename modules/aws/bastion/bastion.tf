@@ -230,7 +230,17 @@ spec:
 EOC
   sudo chown ${var.ssh_user}:${var.ssh_user} /home/${var.ssh_user}/istio-config.yaml
   sudo -H -u ${var.ssh_user} bash -c "istioctl install --skip-confirmation -f /home/${var.ssh_user}/istio-config.yaml" >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  echo "$(date) - ⏳ Waiting for istiod to be ready before installing east-west gateway" >> /home/${var.ssh_user}/prepare_client.log
+  sudo -H -u ${var.ssh_user} bash -c "kubectl rollout status deploy/istiod -n istio-system --timeout=300s" >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  sudo -H -u ${var.ssh_user} bash -c "kubectl wait --for=condition=Available deploy/istiod -n istio-system --timeout=300s" >> /home/${var.ssh_user}/prepare_client.log 2>&1
   sudo -H -u ${var.ssh_user} bash -c "/home/${var.ssh_user}/istio-$ISTIO_VERSION/samples/multicluster/gen-eastwest-gateway.sh --mesh ory-mesh --cluster ${var.istio_cluster_name} --network ${var.istio_network_name} | istioctl install -y -f -" >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  echo "$(date) - 🩹 Forcing explicit proxy image on istio-eastwestgateway (works around 'image: auto' webhook race)" >> /home/${var.ssh_user}/prepare_client.log
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    if sudo -H -u ${var.ssh_user} bash -c "kubectl get deployment istio-eastwestgateway -n istio-system" >/dev/null 2>&1; then break; fi
+    sleep 5
+  done
+  sudo -H -u ${var.ssh_user} bash -c "kubectl set image deployment/istio-eastwestgateway -n istio-system istio-proxy=docker.io/istio/proxyv2:$ISTIO_VERSION" >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  sudo -H -u ${var.ssh_user} bash -c "kubectl rollout status deploy/istio-eastwestgateway -n istio-system --timeout=300s" >> /home/${var.ssh_user}/prepare_client.log 2>&1
   sudo -H -u ${var.ssh_user} bash -c "kubectl apply -n istio-system -f /home/${var.ssh_user}/istio-$ISTIO_VERSION/samples/multicluster/expose-services.yaml" >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - ✅ Istio multi-primary installed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
 %{ endif ~}
