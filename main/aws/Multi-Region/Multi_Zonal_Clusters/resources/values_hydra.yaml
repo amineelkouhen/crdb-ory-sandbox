@@ -22,6 +22,8 @@ service:
     name: hydra-http-admin
 maester:
   enabled: false
+secret:
+  secretsSystem: ${SYSTEM_SECRET}
 hydra:
   dev: true
   automigration:
