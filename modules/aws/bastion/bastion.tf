@@ -162,11 +162,26 @@ MRSQL
   sudo sed -i 's/\$${CRDB_FQDN}/${var.cluster_fqdn}/' /home/${var.ssh_user}/values_kratos.yaml
   sudo sed -i 's/\$${CRDB_FQDN}/${var.cluster_fqdn}/' /home/${var.ssh_user}/values_keto.yaml
   echo "$(date) - ✏️  Setting the repositoy images/releases in Helm Charts" >> /home/${var.ssh_user}/prepare_client.log
-  sudo sed -i 's@$${IMAGE}@'"${var.hydra_image}"'@' /home/${var.ssh_user}/values_hydra.yaml
+  # Split each *_image (full URL) into registry + repo. The chart templates
+  # image as "{{ image.registry }}/{{ image.repository }}", so a full URL in
+  # repository would otherwise be prefixed with the chart's default docker.io.
+  split_image() {
+    case "$1" in
+      *.*/*) echo "$${1%%/*}|$${1#*/}" ;;
+      *)     echo "docker.io|$1" ;;
+    esac
+  }
+  HYDRA_PAIR=$(split_image '${var.hydra_image}');  HYDRA_REG=$${HYDRA_PAIR%%|*};  HYDRA_REPO=$${HYDRA_PAIR#*|}
+  KRATOS_PAIR=$(split_image '${var.kratos_image}'); KRATOS_REG=$${KRATOS_PAIR%%|*}; KRATOS_REPO=$${KRATOS_PAIR#*|}
+  KETO_PAIR=$(split_image '${var.keto_image}');    KETO_REG=$${KETO_PAIR%%|*};   KETO_REPO=$${KETO_PAIR#*|}
+  sudo sed -i "s@\$${REGISTRY}@$HYDRA_REG@"  /home/${var.ssh_user}/values_hydra.yaml
+  sudo sed -i "s@\$${IMAGE}@$HYDRA_REPO@"    /home/${var.ssh_user}/values_hydra.yaml
   sudo sed -i 's/\$${RELEASE}/${var.hydra_release}/' /home/${var.ssh_user}/values_hydra.yaml
-  sudo sed -i 's@$${IMAGE}@'"${var.kratos_image}"'@' /home/${var.ssh_user}/values_kratos.yaml
+  sudo sed -i "s@\$${REGISTRY}@$KRATOS_REG@" /home/${var.ssh_user}/values_kratos.yaml
+  sudo sed -i "s@\$${IMAGE}@$KRATOS_REPO@"   /home/${var.ssh_user}/values_kratos.yaml
   sudo sed -i 's/\$${RELEASE}/${var.kratos_release}/' /home/${var.ssh_user}/values_kratos.yaml
-  sudo sed -i 's@$${IMAGE}@'"${var.keto_image}"'@' /home/${var.ssh_user}/values_keto.yaml
+  sudo sed -i "s@\$${REGISTRY}@$KETO_REG@"   /home/${var.ssh_user}/values_keto.yaml
+  sudo sed -i "s@\$${IMAGE}@$KETO_REPO@"     /home/${var.ssh_user}/values_keto.yaml
   sudo sed -i 's/\$${RELEASE}/${var.keto_release}/' /home/${var.ssh_user}/values_keto.yaml
   echo "$(date) - ✏️  Setting the ports in Helm Charts" >> /home/${var.ssh_user}/prepare_client.log
   sudo sed -i 's/\$${ADMIN_PORT}/${var.hydra_admin_port}/' /home/${var.ssh_user}/values_hydra.yaml
