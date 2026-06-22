@@ -7,6 +7,8 @@ service:
   read:
     enabled: true
     type: LoadBalancer
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: nlb
     name: ory-keto-read
     port: ${READ_PORT}
     appProtocol: http
@@ -15,6 +17,8 @@ service:
   write:
     enabled: true
     type: LoadBalancer
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: nlb
     name: ory-keto-write
     port: ${WRITE_PORT}
     appProtocol: http
