@@ -133,6 +133,7 @@
             "multi_region": true,
             "peer_init_marker_table": "",
             "crdb_multi_region_sql": "${var.crdb_multi_region_sql}",
+            "crdb_node_map_sql": "${var.crdb_node_map_sql}",
             "hydra_issuer_url": "https://hydra-public.${local.deployment_subdomain}.${var.hosted_zone}/",
             "kratos_public_base_url": "https://kratos-public.${local.deployment_subdomain}.${var.hosted_zone}/",
             "hydra_system_secret": "${var.hydra_system_secret}",

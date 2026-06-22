@@ -176,6 +176,12 @@ variable "crdb_multi_region_sql" {
   default     = ""
 }
 
+variable "crdb_node_map_sql" {
+  description = "UPSERT statements seeding system.locations so the CRDB DB Console Node Map renders region/zone coordinates. Rendered next to the license SET when multi_region = true. Empty disables."
+  type        = string
+  default     = ""
+}
+
 variable "hydra_issuer_url" {
   description = "Global public URL for Hydra (used as urls.self.issuer in the Helm values). Empty leaves the values file unchanged."
   type        = string

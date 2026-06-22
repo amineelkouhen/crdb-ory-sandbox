@@ -313,3 +313,33 @@ variable "crdb_multi_region_sql" {
     ALTER DATABASE keto   SURVIVE ZONE FAILURE;
   EOT
 }
+
+############################################################
+# CRDB Node Map
+#
+# Seeds system.locations with lat/long for every region and
+# zone used by the deployment so the DB Console renders nodes
+# on a world map. UPSERT keeps the statements idempotent across
+# both bastions. Coordinates are the canonical values from
+# CockroachDB docs (https://www.cockroachlabs.com/docs/stable/enable-node-map).
+############################################################
+
+variable "crdb_node_map_sql" {
+  description = "UPSERT statements seeding system.locations so the DB Console Node Map renders coordinates for every region and zone. Applied next to the license SET when multi_region = true."
+  type        = string
+  default     = <<-EOT
+    UPSERT INTO system.locations VALUES
+      ('region', 'us-east-1',  37.478397, -76.453077),
+      ('region', 'us-east-2',  40.417287, -82.907123),
+      ('region', 'us-west-1',  38.837522, -120.895824),
+      ('region', 'us-west-2',  43.804133, -120.554201),
+      ('region', 'ap-south-1', 19.075984,  72.877656),
+      ('region', 'ap-south-2', 17.385044,  78.486671),
+      ('zone',   'us-east-1a', 37.478397, -76.453077),
+      ('zone',   'us-east-1b', 37.478397, -76.453077),
+      ('zone',   'us-east-1c', 37.478397, -76.453077),
+      ('zone',   'us-east-2a', 40.417287, -82.907123),
+      ('zone',   'us-east-2b', 40.417287, -82.907123),
+      ('zone',   'us-east-2c', 40.417287, -82.907123);
+  EOT
+}

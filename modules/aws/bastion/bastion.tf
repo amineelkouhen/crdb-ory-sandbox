@@ -113,6 +113,15 @@ resource "aws_instance" "bastion" {
   echo "$command" >> /home/${var.ssh_user}/prepare_client.log
   sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
   echo "$(date) - ✅ CRDB Cluster license is active." >> /home/${var.ssh_user}/prepare_client.log 2>&1
+%{ if var.multi_region && var.crdb_node_map_sql != "" ~}
+  echo "$(date) - 🗺️  Seeding system.locations for the Node Map" >> /home/${var.ssh_user}/prepare_client.log
+  cat > /home/${var.ssh_user}/node_map.sql <<'NMSQL'
+${var.crdb_node_map_sql}
+NMSQL
+  sudo chown ${var.ssh_user}:${var.ssh_user} /home/${var.ssh_user}/node_map.sql
+  sudo bash -c "cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --file=/home/${var.ssh_user}/node_map.sql 2>&1" >> /home/${var.ssh_user}/prepare_client.log
+  echo "$(date) - ✅ Node Map locations seeded." >> /home/${var.ssh_user}/prepare_client.log 2>&1
+%{ endif ~}
 %{ if var.init_schema ~}
   echo "$(date) - 📝 Create Ory Schemas" >> /home/${var.ssh_user}/prepare_client.log
   command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"DROP DATABASE IF EXISTS hydra; CREATE DATABASE IF NOT EXISTS hydra;\""
