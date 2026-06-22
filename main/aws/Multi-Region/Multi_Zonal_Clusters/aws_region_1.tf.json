@@ -72,6 +72,7 @@
             "machine_image": "${var.eks_machine_image}",
             "cluster_size": "${var.eks_cluster_size}",
             "disk_size": "${var.eks_volume_size}",
+            "shared_iam_role_name": "${var.shared_eks_iam_role_name}",
             "resource_tags": {},
             "providers": {
                 "aws": "aws.providerR1"

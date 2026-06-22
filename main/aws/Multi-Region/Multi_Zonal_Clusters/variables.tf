@@ -132,6 +132,17 @@ variable "eks_volume_size" {
   default = 60
 }
 
+# When the operator's AWS principal lacks iam:CreateRole (typical for SSO
+# permission sets), set this to an existing role name that trusts both
+# eks.amazonaws.com and ec2.amazonaws.com and carries the EKS cluster + worker
+# + CNI + ECR-read managed policies. The EKS module will then skip per-cluster
+# role creation and reuse this role for both cluster + node-group ARNs.
+variable "shared_eks_iam_role_name" {
+  description = "Existing IAM role to reuse as both EKS cluster role and node-group role. Empty string creates per-deployment roles (requires iam:CreateRole)."
+  type        = string
+  default     = ""
+}
+
 ############################################################
 # Bastion (client) networking, per region
 ############################################################
