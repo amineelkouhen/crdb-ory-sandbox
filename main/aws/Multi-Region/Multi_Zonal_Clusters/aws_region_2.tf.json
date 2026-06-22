@@ -141,7 +141,7 @@
             "istio_root_ca_key": "${var.istio_root_ca_key}",
             "istio_cluster_name": "${var.istio_cluster_names[1]}",
             "istio_network_name": "${var.istio_network_names[1]}",
-            "dependencies": "${[module.crdb-cluster-1.cr-private-ips, module.crdb-cluster-2.cr-private-ips, module.bastion-1.public-ip]}",
+            "dependencies": "${concat(module.crdb-cluster-1.cr-private-ips, module.crdb-cluster-2.cr-private-ips, [module.bastion-1.public-ip])}",
             "providers": {
                 "aws": "aws.clientProviderR2"
             }
