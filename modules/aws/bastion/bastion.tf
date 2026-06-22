@@ -50,8 +50,8 @@ resource "aws_instance" "bastion" {
     network_interface_id = aws_network_interface.nic.id
   }
 
-  user_data = <<-EOF
-  #!/bin/bash
+  user_data_base64 = base64gzip(<<-EOF
+#!/bin/bash
   echo "$(date) - 📦 Preparing client" >> /home/${var.ssh_user}/prepare_client.log
   export DEBIAN_FRONTEND=noninteractive
   export TZ="UTC"
@@ -312,6 +312,7 @@ EOC
   sudo -H -u ${var.ssh_user} bash -c 'make clean build' >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - 💯 Client setting Completed" >> /home/${var.ssh_user}/prepare_client.log
   EOF
+  )
 
   root_block_device {
     volume_size           = 50
