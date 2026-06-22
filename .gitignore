@@ -9,3 +9,6 @@ terraform.tfstate.*
 *.tfvars.json
 crash.log
 crash.*.log
+
+# Ory enterprise OEL service account key — never commit
+**/resources/credentials.json
