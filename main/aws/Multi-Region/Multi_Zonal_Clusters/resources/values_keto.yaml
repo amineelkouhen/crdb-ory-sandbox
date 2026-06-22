@@ -1,0 +1,38 @@
+image:
+  repository: ${IMAGE}
+  tag: ${RELEASE}
+  pullPolicy: IfNotPresent
+service:
+  read:
+    enabled: true
+    type: LoadBalancer
+    name: ory-keto-read
+    port: ${READ_PORT}
+    appProtocol: http
+    headless:
+      enabled: false
+  write:
+    enabled: true
+    type: LoadBalancer
+    name: ory-keto-write
+    port: ${WRITE_PORT}
+    appProtocol: http
+    headless:
+      enabled: false
+keto:
+  automigration:
+    enabled: true
+  config:
+    serve:
+      read:
+        port: ${READ_PORT}
+      write:
+        port: ${WRITE_PORT}
+    namespaces:
+      - id: 0
+        name: default_namespace
+      - id: 1
+        name: documents
+      - id: 2
+        name: users
+    dsn: "cockroach://root@${CRDB_FQDN}:26257/keto?sslmode=disable"

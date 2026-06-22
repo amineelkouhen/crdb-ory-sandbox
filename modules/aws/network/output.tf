@@ -1,13 +1,13 @@
 output "vpc" {
   description = "The id of the VPC"
-  value       = aws_vpc.vpc.id 
-  depends_on = [aws_main_route_table_association.rt-main]
+  value       = aws_vpc.vpc.id
+  depends_on  = [aws_main_route_table_association.rt-main]
 }
 
 output "raw_vpc" {
   description = "The raw VPC object"
-  value       = aws_vpc.vpc 
-  depends_on = [aws_main_route_table_association.rt-main]
+  value       = aws_vpc.vpc
+  depends_on  = [aws_main_route_table_association.rt-main]
 }
 
 output "subnets" {
@@ -22,15 +22,25 @@ output "security-groups" {
 
 output "sql_load_balancer_target_group" {
   description = "The arn of the Load Balancer on port 26257"
-  value = aws_lb_target_group.sql_lb_tg.arn
+  value       = aws_lb_target_group.sql_lb_tg.arn
 }
 
 output "console_load_balancer_target_group" {
   description = "The arn of the Load Balancer on port 8080"
-  value = aws_lb_target_group.console_lb_tg.arn
+  value       = aws_lb_target_group.console_lb_tg.arn
 }
 
 output "nlb_dns_name" {
   description = "DNS name of NLB"
   value       = aws_lb.nlb.dns_name
+}
+
+output "nlb_zone_id" {
+  description = "Hosted zone ID of NLB (for Route 53 ALIAS records)"
+  value       = aws_lb.nlb.zone_id
+}
+
+output "nlb_arn" {
+  description = "ARN of NLB"
+  value       = aws_lb.nlb.arn
 }

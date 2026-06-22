@@ -113,6 +113,7 @@ resource "aws_instance" "bastion" {
   echo "$command" >> /home/${var.ssh_user}/prepare_client.log
   sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
   echo "$(date) - ✅ CRDB Cluster license is active." >> /home/${var.ssh_user}/prepare_client.log 2>&1
+%{ if var.init_schema ~}
   echo "$(date) - 📝 Create Ory Schemas" >> /home/${var.ssh_user}/prepare_client.log
   command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"DROP DATABASE IF EXISTS hydra; CREATE DATABASE IF NOT EXISTS hydra;\""
   sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
@@ -123,6 +124,24 @@ resource "aws_instance" "bastion" {
   command="cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"DROP DATABASE IF EXISTS keto; CREATE DATABASE IF NOT EXISTS keto;\""
   sudo bash -c "$command 2>&1" >> /home/${var.ssh_user}/prepare_client.log
   echo "$(date) - ✅ Keto DB is created." >> /home/${var.ssh_user}/prepare_client.log 2>&1
+%{ endif ~}
+%{ if var.multi_region && var.init_schema && var.crdb_multi_region_sql != "" ~}
+  echo "$(date) - 🌍 Applying multi-region locality SQL" >> /home/${var.ssh_user}/prepare_client.log
+  cat > /home/${var.ssh_user}/multi_region.sql <<'MRSQL'
+${var.crdb_multi_region_sql}
+MRSQL
+  sudo chown ${var.ssh_user}:${var.ssh_user} /home/${var.ssh_user}/multi_region.sql
+  sudo bash -c "cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --file=/home/${var.ssh_user}/multi_region.sql 2>&1" >> /home/${var.ssh_user}/prepare_client.log
+  echo "$(date) - ✅ Multi-region locality applied." >> /home/${var.ssh_user}/prepare_client.log 2>&1
+%{ endif ~}
+%{ if !var.init_schema && var.peer_init_marker_table != "" ~}
+  echo "$(date) - ⏳ Waiting for peer bastion to initialize schema (marker: ${var.peer_init_marker_table})..." >> /home/${var.ssh_user}/prepare_client.log
+  until sudo bash -c "cockroach sql --url postgresql://root@${var.cluster_fqdn}:26257 --insecure --execute=\"SELECT 1 FROM ${var.peer_init_marker_table} LIMIT 1\"" >/dev/null 2>&1; do
+    echo "🔄 Schema not ready yet, retrying in 15s..." >> /home/${var.ssh_user}/prepare_client.log
+    sleep 15
+  done
+  echo "$(date) - ✅ Peer-initialized schema detected." >> /home/${var.ssh_user}/prepare_client.log 2>&1
+%{ endif ~}
   echo "$(date) - 👮 Activate Service Account for Ory(OEL)" >> /home/${var.ssh_user}/prepare_client.log
   sudo gcloud auth activate-service-account --key-file='/home/${var.ssh_user}/credentials.json' >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - 🛠  Install Helm" >> /home/${var.ssh_user}/prepare_client.log
@@ -156,9 +175,71 @@ resource "aws_instance" "bastion" {
   sudo sed -i 's/\$${PUBLIC_PORT}/${var.kratos_public_port}/' /home/${var.ssh_user}/values_kratos.yaml
   sudo sed -i 's/\$${READ_PORT}/${var.keto_read_port}/' /home/${var.ssh_user}/values_keto.yaml
   sudo sed -i 's/\$${WRITE_PORT}/${var.keto_write_port}/' /home/${var.ssh_user}/values_keto.yaml
+%{ if var.hydra_issuer_url != "" ~}
+  echo "$(date) - 🌐 Setting Hydra issuer URL in Helm values" >> /home/${var.ssh_user}/prepare_client.log
+  sudo sed -i 's@\$${ISSUER_URL}@${var.hydra_issuer_url}@' /home/${var.ssh_user}/values_hydra.yaml
+%{ endif ~}
+%{ if var.hydra_system_secret != "" ~}
+  echo "$(date) - 🔐 Setting Hydra shared system secret in Helm values" >> /home/${var.ssh_user}/prepare_client.log
+  sudo sed -i 's@\$${SYSTEM_SECRET}@${var.hydra_system_secret}@' /home/${var.ssh_user}/values_hydra.yaml
+%{ endif ~}
+%{ if var.kratos_public_base_url != "" ~}
+  echo "$(date) - 🌐 Setting Kratos public base URL in Helm values" >> /home/${var.ssh_user}/prepare_client.log
+  sudo sed -i 's@\$${KRATOS_PUBLIC_BASE_URL}@${var.kratos_public_base_url}@' /home/${var.ssh_user}/values_kratos.yaml
+%{ endif ~}
+%{ if var.kratos_default_secret != "" ~}
+  echo "$(date) - 🔐 Setting Kratos shared default secret in Helm values" >> /home/${var.ssh_user}/prepare_client.log
+  sudo sed -i 's@\$${KRATOS_DEFAULT_SECRET}@${var.kratos_default_secret}@' /home/${var.ssh_user}/values_kratos.yaml
+%{ endif ~}
+%{ if var.kratos_cookie_secret != "" ~}
+  echo "$(date) - 🔐 Setting Kratos shared cookie secret in Helm values" >> /home/${var.ssh_user}/prepare_client.log
+  sudo sed -i 's@\$${KRATOS_COOKIE_SECRET}@${var.kratos_cookie_secret}@' /home/${var.ssh_user}/values_kratos.yaml
+%{ endif ~}
   sleep 10
+%{ if var.multi_region ~}
+  echo "$(date) - 🕸️  Installing Istio multi-primary (cluster=${var.istio_cluster_name}, network=${var.istio_network_name})" >> /home/${var.ssh_user}/prepare_client.log
+  ISTIO_VERSION=1.22.0
+  cd /home/${var.ssh_user}
+  sudo -H -u ${var.ssh_user} bash -c "curl -L https://istio.io/downloadIstio | ISTIO_VERSION=$ISTIO_VERSION sh -" >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  sudo cp /home/${var.ssh_user}/istio-$ISTIO_VERSION/bin/istioctl /usr/local/bin/
+  sudo -H -u ${var.ssh_user} bash -c 'kubectl create namespace istio-system --dry-run=client -o yaml | kubectl apply -f -' >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  cat > /home/${var.ssh_user}/ca-cert.pem <<'CACERT'
+${var.istio_root_ca_cert}
+CACERT
+  cat > /home/${var.ssh_user}/ca-key.pem <<'CAKEY'
+${var.istio_root_ca_key}
+CAKEY
+  sudo chown ${var.ssh_user}:${var.ssh_user} /home/${var.ssh_user}/ca-cert.pem /home/${var.ssh_user}/ca-key.pem
+  sudo chmod 600 /home/${var.ssh_user}/ca-key.pem
+  sudo -H -u ${var.ssh_user} bash -c "kubectl create secret generic cacerts -n istio-system \
+    --from-file=ca-cert.pem=/home/${var.ssh_user}/ca-cert.pem \
+    --from-file=ca-key.pem=/home/${var.ssh_user}/ca-key.pem \
+    --from-file=root-cert.pem=/home/${var.ssh_user}/ca-cert.pem \
+    --from-file=cert-chain.pem=/home/${var.ssh_user}/ca-cert.pem \
+    --dry-run=client -o yaml | kubectl apply -f -" >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  cat > /home/${var.ssh_user}/istio-config.yaml <<EOC
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  values:
+    global:
+      meshID: ory-mesh
+      multiCluster:
+        clusterName: ${var.istio_cluster_name}
+      network: ${var.istio_network_name}
+EOC
+  sudo chown ${var.ssh_user}:${var.ssh_user} /home/${var.ssh_user}/istio-config.yaml
+  sudo -H -u ${var.ssh_user} bash -c "istioctl install --skip-confirmation -f /home/${var.ssh_user}/istio-config.yaml" >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  sudo -H -u ${var.ssh_user} bash -c "/home/${var.ssh_user}/istio-$ISTIO_VERSION/samples/multicluster/gen-eastwest-gateway.sh --mesh ory-mesh --cluster ${var.istio_cluster_name} --network ${var.istio_network_name} | istioctl install -y -f -" >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  sudo -H -u ${var.ssh_user} bash -c "kubectl apply -n istio-system -f /home/${var.ssh_user}/istio-$ISTIO_VERSION/samples/multicluster/expose-services.yaml" >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  echo "$(date) - ✅ Istio multi-primary installed." >> /home/${var.ssh_user}/prepare_client.log 2>&1
+%{ endif ~}
   echo "$(date) - ☸️  Creating EKS Ory Namespace" >> /home/${var.ssh_user}/prepare_client.log
   sudo -H -u ${var.ssh_user} bash -c 'kubectl create namespace ory --dry-run=client -o yaml | kubectl apply -f -' >> /home/${var.ssh_user}/prepare_client.log 2>&1
+%{ if var.multi_region ~}
+  sudo -H -u ${var.ssh_user} bash -c 'kubectl label namespace ory istio-injection=enabled --overwrite' >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  sudo -H -u ${var.ssh_user} bash -c 'kubectl label namespace ory topology.istio.io/network=${var.istio_network_name} --overwrite' >> /home/${var.ssh_user}/prepare_client.log 2>&1
+%{ endif ~}
   sudo -H -u ${var.ssh_user} bash -c 'kubectl config set-context --current --namespace ory' >> /home/${var.ssh_user}/prepare_client.log 2>&1
   bash <(curl https://raw.githubusercontent.com/ory/meta/master/install.sh) -d -b . hydra v2.3.0
   sudo mv ./hydra /usr/local/bin/

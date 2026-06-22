@@ -1,0 +1,184 @@
+= Multi-Region Active-Active Ory (Hydra / Kratos / Keto) on CockroachDB
+
+Two AWS regions, two EKS clusters joined by an Istio multi-primary mesh,
+one logical multi-region CockroachDB cluster spanning both, and a single
+set of latency-routed public DNS records under a wildcard hostname.
+
+== Topology
+
+----
+                        sko-iam-demo.com (public R53 zone)
+                                  │
+        ┌─────────────────────────┴─────────────────────────┐
+        │   *.<deployment_name>.sko-iam-demo.com (latency)  │
+        └─────────────┬──────────────────────┬──────────────┘
+                      │                      │
+              ap-south-1 (Mumbai)    ap-south-2 (Hyderabad)
+              ┌────────────────┐     ┌────────────────┐
+              │  CRDB VPC      │◄────┤  CRDB VPC      │  (VPC peering)
+              │  3-node region │     │  3-node region │
+              └───────┬────────┘     └───────┬────────┘
+                      │                      │
+              ┌───────┴────────┐     ┌───────┴────────┐
+              │  EKS + Istio   │◄═══►│  EKS + Istio   │  (mesh east-west
+              │  Hydra/Kratos/ │     │  Hydra/Kratos/ │   over public NLB)
+              │  Keto pods     │     │  Keto pods     │
+              └────────────────┘     └────────────────┘
+                      │                      │
+              ┌───────┴────────┐     ┌───────┴────────┐
+              │  Bastion VPC   │     │  Bastion VPC   │
+              │  init_schema=  │     │  init_schema=  │
+              │  true          │     │  false (waits) │
+              └────────────────┘     └────────────────┘
+----
+
+* CRDB: one logical multi-region cluster (3 nodes per region, 6 total).
+  Region 1's bastion runs the cluster initializer + schema DDL; region 2's
+  bastion polls a marker table before deploying Helm charts.
+* CRDB schema locality: `PRIMARY REGION = ap-south-1`, `ADD REGION
+  ap-south-2`, `SURVIVE ZONE FAILURE`. Defined in
+  `var.crdb_multi_region_sql` and applied by the initializer bastion.
+* Istio: multi-primary with a shared root CA, one istiod per cluster,
+  east-west gateway per cluster, remote-secret exchange driven from the
+  operator's machine via SSH piping (see `istio_remote_secrets.tf`).
+* DNS: latency-routed `aws_route53_record` per service per region against
+  the public `sko-iam-demo.com` zone. Subdomain prefix is derived from
+  `var.deployment_name` (lower-cased, underscores replaced with dashes).
+* TLS: a wildcard ACM cert is pre-provisioned per region but the NLBs
+  themselves serve HTTP for the sandbox. Attach the cert to an Istio
+  ingress gateway or ALB Ingress Controller as a follow-up.
+
+== Trade-off acknowledged
+
+Two regions with three replicas each cannot survive a full-region
+outage for writes. The cluster keeps serving reads from the surviving
+region but new writes block until quorum returns. To make the cluster
+write-survivable across a region loss, add a small witness node in a
+third location later. This is intentionally out of scope.
+
+== Variables to supply
+
+Most variables ship with sensible defaults (regions, CIDRs, sizing,
+images, ports). The following are required at apply time:
+
+[cols="1,3"]
+|===
+| Variable | Purpose
+
+| `deployment_name`
+| Resource prefix and DNS subdomain root.
+  `amine_ory` becomes `amine-ory.sko-iam-demo.com`.
+
+| `aws_access_key` / `aws_secret_key` / `aws_session_token`
+| AWS credentials (both regions).
+
+| `cluster_license`
+| CRDB enterprise license string.
+
+| `hydra_system_secret`
+| Shared Hydra `secrets.system`. Must be identical across regions so
+  tokens issued in one region decrypt in the other.
+
+| `kratos_default_secret` / `kratos_cookie_secret`
+| Shared Kratos session/cookie secrets, identical across regions.
+
+| `istio_root_ca_cert` / `istio_root_ca_key`
+| PEM-encoded shared root CA for the Istio mesh. Must match across
+  regions; do not regenerate per region.
+|===
+
+Generate the Istio root CA once and re-use the same PEMs across applies:
+
+[source,bash]
+----
+openssl req -x509 -sha256 -newkey rsa:4096 -nodes \
+  -keyout istio-root-ca.key -out istio-root-ca.pem -days 3650 \
+  -subj "/O=ory-mesh/CN=ory-mesh root"
+----
+
+Generate the Hydra/Kratos secrets:
+
+[source,bash]
+----
+openssl rand -hex 32   # hydra_system_secret
+openssl rand -hex 32   # kratos_default_secret
+openssl rand -hex 32   # kratos_cookie_secret
+----
+
+== Deploy
+
+[source,bash]
+----
+cd main/aws/Multi-Region/Multi_Zonal_Clusters
+terraform init
+terraform apply
+----
+
+Apply runs in one shot. Inside `terraform apply` the steps execute in
+this order:
+
+. Both region VPCs, EKS clusters, CRDB nodes, and bastions provisioned in
+  parallel.
+. Region 1's bastion: installs CRDB CLI, waits for the cluster to be up,
+  applies the license, drops/creates the three Ory schemas, applies the
+  multi-region locality DDL, installs Istio multi-primary, installs the
+  Hydra/Kratos/Keto Helm charts.
+. Region 2's bastion: same prep, but skips schema creation and polls
+  `hydra.hydra_client` until the initializer has finished; then installs
+  Istio + the same Helm charts.
+. `null_resource.wait_for_ory_lbs_r1/r2` SSH-poll each bastion until
+  every Ory service has a `LoadBalancer ingress hostname`.
+. `data.aws_lb.ory_r1/r2` look up each NLB by tag.
+. `aws_route53_record.ory_r1/r2` + `crdb_r1/r2` create the 7 × 2
+  latency-routed records.
+. `null_resource.istio_remote_secret_*` SSH into each bastion, generate
+  the remote-secret via the local `istioctl`, and pipe it via the
+  operator's machine to the peer bastion's `kubectl apply`.
+
+== Verify
+
+[source,bash]
+----
+# 1. Cluster sees both regions
+cockroach sql --insecure --url \
+  "postgresql://root@crdb.<deployment_name>.sko-iam-demo.com:26257/?sslmode=disable" \
+  -e "SHOW REGIONS FROM CLUSTER"
+
+# 2. Hydra OIDC discovery (resolves to nearest region via latency policy)
+curl -s http://hydra-public.<deployment_name>.sko-iam-demo.com:4444/.well-known/openid-configuration | jq .issuer
+
+# 3. End-to-end cross-region token: issue against r1, introspect against r2
+NLB_R1=$(dig +short hydra-public.<deployment_name>.sko-iam-demo.com | head -1)
+NLB_R2=$(dig +short hydra-admin.<deployment_name>.sko-iam-demo.com | head -1)
+# (force resolution by region for the demo; in real traffic latency policy decides)
+
+# 4. Cross-cluster service discovery via Istio
+kubectl --context=mumbai exec -n ory deploy/ory-hydra -- \
+  curl -s http://ory-keto-read.ory.svc.cluster.local:4466/health/alive
+----
+
+== Single-region regression
+
+The single-region stack at `main/aws/Single-Region-Multi-AZ` is
+untouched. All `modules/aws/bastion` changes are gated by variables
+whose defaults preserve the original behavior, and the new
+`modules/aws/network` outputs (`nlb_zone_id`, `nlb_arn`) are purely
+additive.
+
+[source,bash]
+----
+cd main/aws/Single-Region-Multi-AZ
+terraform plan   # expects zero changes
+----
+
+== Open items / future work
+
+* TLS termination: wildcard cert is provisioned but not attached.
+  Promote the Istio east-west gateway or add an ALB Ingress Controller
+  with `certificate-arn` references to start serving HTTPS on the
+  configured ports.
+* Witness region: add a 1-node CRDB cluster in a third location to make
+  writes survive a full-region loss.
+* Hydra/Kratos UI: only the APIs are deployed. Wire the
+  `kratos-selfservice-ui-node` chart (or your own UI) into the mesh and
+  add a corresponding DNS record if a browser-facing UI is required.

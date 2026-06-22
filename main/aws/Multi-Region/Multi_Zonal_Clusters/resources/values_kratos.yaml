@@ -1,0 +1,43 @@
+image:
+  repository: ${IMAGE}
+  tag: ${RELEASE}
+  pullPolicy: IfNotPresent
+imagePullSecrets:
+  - name: ory-oel-gcr-secret
+service:
+  admin:
+    enabled: true
+    type: LoadBalancer
+    port: ${ADMIN_PORT}
+    name: kratos-http-admin
+  public:
+    enabled: true
+    type: LoadBalancer
+    port: ${PUBLIC_PORT}
+    name: kratos-http-public
+kratos:
+  development: true
+  automigration:
+    enabled: true
+  config:
+    serve:
+      admin:
+        port: ${ADMIN_PORT}
+      public:
+        port: ${PUBLIC_PORT}
+        base_url: ${KRATOS_PUBLIC_BASE_URL}
+    dsn: "cockroach://root@${CRDB_FQDN}:26257/kratos"
+    selfservice:
+      default_browser_return_url: "http://127.0.0.1/home"
+    identity:
+      default_schema_id: default
+      schemas:
+        - id: default
+          url: https://raw.githubusercontent.com/amineelkouhen/crdb-ory-sandbox/refs/heads/main/main/aws/Multi-Region/Multi_Zonal_Clusters/resources/identity.default.schema.json
+  secrets:
+    default:
+      - ${KRATOS_DEFAULT_SECRET}
+    cookie:
+      - ${KRATOS_COOKIE_SECRET}
+courier:
+  enabled: false
