@@ -143,7 +143,7 @@ Variables with defaults worth knowing about:
   pair, e.g. `regions = ["us-east-1", "us-east-2"]`.
 
 | `hosted_zone`
-| `sko-iam-demo.com`. The zone must already exist in Route 53 with
+| `demo.datacrafterslab.com`. The zone must already exist in Route 53 with
   working public NS delegation.
 
 | `crdb_multi_region_sql`

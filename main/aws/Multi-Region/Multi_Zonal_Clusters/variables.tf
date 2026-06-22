@@ -20,7 +20,7 @@ variable "env" {
 
 variable "hosted_zone" {
   description = "Public Route 53 hosted zone in which latency-based records are created."
-  default     = "sko-iam-demo.com"
+  default     = "demo.datacrafterslab.com"
 }
 
 ############################################################
