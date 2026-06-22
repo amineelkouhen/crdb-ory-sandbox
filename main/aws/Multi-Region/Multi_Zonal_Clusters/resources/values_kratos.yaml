@@ -38,7 +38,7 @@ kratos:
       default_schema_id: default
       schemas:
         - id: default
-          url: https://raw.githubusercontent.com/amineelkouhen/crdb-ory-sandbox/refs/heads/feat/multi-region-active-active/main/aws/Multi-Region/Multi_Zonal_Clusters/resources/identity.default.schema.json
+          url: https://raw.githubusercontent.com/amineelkouhen/crdb-ory-sandbox/refs/heads/main/main/aws/Multi-Region/Multi_Zonal_Clusters/resources/identity.default.schema.json
   secrets:
     default:
       - ${KRATOS_DEFAULT_SECRET}
