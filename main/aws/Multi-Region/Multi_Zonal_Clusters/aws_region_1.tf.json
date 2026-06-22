@@ -20,7 +20,7 @@
     "module": {
         "network-vpc-1": {
             "source": "../../../../modules/aws/network",
-            "name": "${var.deployment_name}-${var.env}-r1",
+            "name": "${var.deployment_name}-region1",
             "vpc_cidr": "${var.crdb_vpc_cidr[0]}",
             "resource_tags": {},
             "subnets_cidrs": "${var.crdb_subnets[0]}",
@@ -30,7 +30,7 @@
         },
         "keypair-1": {
             "source": "../../../../modules/aws/keypair",
-            "name": "${var.deployment_name}-${var.env}-r1",
+            "name": "${var.deployment_name}-region1",
             "ssh_public_key": "${var.ssh_public_key}",
             "resource_tags": {},
             "providers": {
@@ -39,7 +39,7 @@
         },
         "crdb-cluster-1": {
             "source": "../../../../modules/aws/cr",
-            "name": "${var.deployment_name}-${var.env}-r1",
+            "name": "${var.deployment_name}-region1",
             "worker_count": "${var.crdb_cluster_size[0]}",
             "machine_type": "${var.crdb_machine_type}",
             "machine_image": "${var.crdb_machine_images[0]}",
@@ -64,7 +64,7 @@
         },
         "ory-cluster-1": {
             "source": "../../../../modules/aws/eks",
-            "deployment_name": "${var.deployment_name}-${var.env}-r1",
+            "deployment_name": "${var.deployment_name}-region1",
             "cluster_version": "${var.eks_version}",
             "vpc_cidr": "${var.eks_vpc_cidr[0]}",
             "subnets_cidrs": "${var.eks_public_subnets[0]}",
@@ -80,7 +80,7 @@
         },
         "client-network-1": {
             "source": "../../../../modules/aws/client-network",
-            "name": "${var.deployment_name}-${var.env}-r1-client",
+            "name": "${var.deployment_name}-region1-client",
             "client_vpc_cidr": "${var.client_vpc_cidr[0]}",
             "resource_tags": {},
             "client_subnet_cidr": "${var.client_subnet[0]}",
@@ -90,7 +90,7 @@
         },
         "client-keypair-1": {
             "source": "../../../../modules/aws/keypair",
-            "name": "${var.deployment_name}-${var.env}-r1-client",
+            "name": "${var.deployment_name}-region1-client",
             "ssh_public_key": "${var.ssh_public_key}",
             "resource_tags": {},
             "providers": {
@@ -99,7 +99,7 @@
         },
         "bastion-1": {
             "source": "../../../../modules/aws/bastion",
-            "name": "${var.deployment_name}-${var.env}-r1",
+            "name": "${var.deployment_name}-region1",
             "subnet": "${module.client-network-1.client_subnets.id}",
             "availability_zone": "${keys(var.client_subnet[0])[0]}",
             "security_groups": "${module.client-network-1.client-security-groups}",
