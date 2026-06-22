@@ -292,8 +292,8 @@ shared `secrets.system` value across regions.
 === 6. Istio cross-cluster service discovery
 
 Scale region 1's Keto to zero so the local Service has no endpoints,
-then `curl` Keto's cluster-local DNS name from a Hydra pod in region 1
-— Envoy must route through the east-west gateway to region 2:
+then `curl` Keto's cluster-local DNS name from a Hydra pod in region 1.
+Envoy must route through the east-west gateway to region 2:
 
 [source,bash]
 ----
@@ -464,6 +464,244 @@ one of:
 
 The public-data ports (`:4444` Hydra, `:4434` Kratos, `:4466` Keto
 read) are designed for end-user / app traffic and are fine to expose.
+
+== Testing Kratos from outside (no bastion, no kubectl)
+
+Kratos exposes the same public surface as Hydra: the public API on
+`:4434` is what end-users hit, the admin API on `:4433` is what an
+operator or backend service hits. Both are reachable via the
+latency-routed records. The full identity lifecycle (sign up, log in,
+inspect session, log out) can run from a laptop with only `curl`.
+
+[source,bash]
+----
+export DEPLOY=amine_ory
+export SUB=$(echo "$DEPLOY" | tr '[:upper:]_' '[:lower:]-')
+export ZONE=demo.datacrafterslab.com
+
+KRATOS_PUB="http://kratos-public.${SUB}.${ZONE}:4434"
+----
+
+=== Sign up (registration)
+
+Initialize an API-mode registration flow, then post credentials back to
+the flow's ID. The flow response's `ui.action` URL points at the public
+hostname over HTTPS; we ignore it and post to `${KRATOS_PUB}` directly
+because the deployment serves HTTP only.
+
+[source,bash]
+----
+EMAIL="user-$(date +%s)@example.com"
+PASS='Sup3rS3cr3t!verylong'
+
+FLOW=$(curl -sS "${KRATOS_PUB}/self-service/registration/api")
+FID=$(echo "$FLOW" | jq -r .id)
+
+curl -sS -X POST -H 'Content-Type: application/json' \
+  "${KRATOS_PUB}/self-service/registration?flow=${FID}" \
+  -d "{
+    \"method\":\"password\",
+    \"password\":\"${PASS}\",
+    \"traits\":{
+      \"email\":\"${EMAIL}\",
+      \"name\":{\"first\":\"Demo\",\"last\":\"User\"}
+    }
+  }" | jq '.identity.id, .identity.traits.email'
+----
+
+Registration only creates the identity; the default schema does not
+chain a session. To get a token you must log in.
+
+=== Log in
+
+[source,bash]
+----
+FLOW=$(curl -sS "${KRATOS_PUB}/self-service/login/api")
+FID=$(echo "$FLOW" | jq -r .id)
+
+TOKEN=$(curl -sS -X POST -H 'Content-Type: application/json' \
+  "${KRATOS_PUB}/self-service/login?flow=${FID}" \
+  -d "{
+    \"method\":\"password\",
+    \"identifier\":\"${EMAIL}\",
+    \"password\":\"${PASS}\"
+  }" | jq -r .session_token)
+
+echo "session_token=$TOKEN"
+----
+
+=== Inspect the session (whoami)
+
+[source,bash]
+----
+curl -sS -H "X-Session-Token: ${TOKEN}" \
+  "${KRATOS_PUB}/sessions/whoami" | jq '.active, .identity.traits.email'
+----
+
+Expected: `true` and the email used at sign-up.
+
+=== Log out
+
+[source,bash]
+----
+curl -sS -X DELETE -H 'Content-Type: application/json' \
+  "${KRATOS_PUB}/self-service/logout/api" \
+  -d "{\"session_token\":\"${TOKEN}\"}" -w "HTTP %{http_code}\n"
+
+# whoami should now return 401
+curl -sS -H "X-Session-Token: ${TOKEN}" \
+  "${KRATOS_PUB}/sessions/whoami" -w "\nHTTP %{http_code}\n"
+----
+
+Expected: `HTTP 204` on logout, `HTTP 401` on the follow-up whoami.
+
+=== Log in to one region, validate the session in the other
+
+Same `--resolve` pattern as Hydra. Pin the login to region 1, then run
+whoami pinned to region 2: if `kratos.identities` and `kratos.sessions`
+are properly replicated and both deployments share `secrets.default` +
+`secrets.cookie`, the second call returns `active: true`.
+
+[source,bash]
+----
+HOST="kratos-public.${SUB}.${ZONE}"
+PORT=4434
+ZONE_ID=$(aws route53 list-hosted-zones-by-name --dns-name "${ZONE}." \
+  --query 'HostedZones[0].Id' --output text | sed 's|/hostedzone/||')
+
+R1_KP=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+  --query "ResourceRecordSets[?Name=='${HOST}.' && SetIdentifier=='<region 1>'].AliasTarget.DNSName" \
+  --output text | sed 's/\.$//')
+R2_KP=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+  --query "ResourceRecordSets[?Name=='${HOST}.' && SetIdentifier=='<region 2>'].AliasTarget.DNSName" \
+  --output text | sed 's/\.$//')
+
+R1_KP_IP=$(dig +short "$R1_KP" @8.8.8.8 | head -1)
+R2_KP_IP=$(dig +short "$R2_KP" @8.8.8.8 | head -1)
+
+# log in via region 1
+FLOW=$(curl -sS --resolve "${HOST}:${PORT}:${R1_KP_IP}" \
+  "http://${HOST}:${PORT}/self-service/login/api")
+FID=$(echo "$FLOW" | jq -r .id)
+
+TOKEN=$(curl -sS --resolve "${HOST}:${PORT}:${R1_KP_IP}" \
+  -X POST -H 'Content-Type: application/json' \
+  "http://${HOST}:${PORT}/self-service/login?flow=${FID}" \
+  -d "{\"method\":\"password\",\"identifier\":\"${EMAIL}\",\"password\":\"${PASS}\"}" \
+  | jq -r .session_token)
+
+# validate via region 2
+curl -sS --resolve "${HOST}:${PORT}:${R2_KP_IP}" \
+  -H "X-Session-Token: ${TOKEN}" \
+  "http://${HOST}:${PORT}/sessions/whoami" | jq '.active, .identity.traits.email'
+
+# log out via region 1, then re-check via region 2 (expect 401)
+curl -sS --resolve "${HOST}:${PORT}:${R1_KP_IP}" \
+  -X DELETE -H 'Content-Type: application/json' \
+  "http://${HOST}:${PORT}/self-service/logout/api" \
+  -d "{\"session_token\":\"${TOKEN}\"}" -w "logout HTTP %{http_code}\n"
+
+curl -sS --resolve "${HOST}:${PORT}:${R2_KP_IP}" \
+  -H "X-Session-Token: ${TOKEN}" \
+  "http://${HOST}:${PORT}/sessions/whoami" -w "\nHTTP %{http_code}\n"
+----
+
+Expected: cross-region whoami returns `active: true` with the email,
+then logout returns `204`, then cross-region whoami returns `401`. This
+proves the session is a single global object backed by the multi-region
+`kratos.sessions` table, not two independent per-region copies.
+
+== Testing Keto from outside (no bastion, no kubectl)
+
+Keto's read API (`:4466`) and write API (`:4467`) are both published as
+latency-routed records. Namespaces are declared statically in
+`resources/values_keto.yaml`; the defaults shipped here are
+`default_namespace`, `documents`, and `users`. Any tuple you write must
+reference one of those, otherwise Keto returns
+`404 Unknown namespace`.
+
+[source,bash]
+----
+export DEPLOY=amine_ory
+export SUB=$(echo "$DEPLOY" | tr '[:upper:]_' '[:lower:]-')
+export ZONE=demo.datacrafterslab.com
+
+KETO_WRITE="http://keto-write.${SUB}.${ZONE}:4467"
+KETO_READ="http://keto-read.${SUB}.${ZONE}:4466"
+----
+
+=== Write a relation tuple
+
+[source,bash]
+----
+curl -sS -X PUT -H 'Content-Type: application/json' \
+  "${KETO_WRITE}/admin/relation-tuples" \
+  -d '{
+    "namespace":"documents",
+    "object":"report-2026-q2",
+    "relation":"viewer",
+    "subject_id":"user:alice"
+  }'
+----
+
+Expected: the tuple echoed back as JSON.
+
+=== Check a permission
+
+[source,bash]
+----
+curl -sS "${KETO_READ}/relation-tuples/check?\
+namespace=documents&object=report-2026-q2&relation=viewer&subject_id=user:alice"
+----
+
+Expected: `{"allowed":true}`. A subject without that relation returns
+`{"allowed":false}`.
+
+=== List tuples in a namespace
+
+[source,bash]
+----
+curl -sS "${KETO_READ}/relation-tuples?namespace=documents" | jq .
+----
+
+=== Grant in one region, check in the other
+
+Same `--resolve` pattern. Write the tuple pinned to region 1, then
+check it pinned to region 2. If `keto` is marked
+`SURVIVE ZONE FAILURE` with both regions added, the answer is
+`allowed: true` even though the write never touched region 2 directly.
+
+[source,bash]
+----
+WRITE_HOST="keto-write.${SUB}.${ZONE}"
+READ_HOST="keto-read.${SUB}.${ZONE}"
+ZONE_ID=$(aws route53 list-hosted-zones-by-name --dns-name "${ZONE}." \
+  --query 'HostedZones[0].Id' --output text | sed 's|/hostedzone/||')
+
+R1_KW=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+  --query "ResourceRecordSets[?Name=='${WRITE_HOST}.' && SetIdentifier=='<region 1>'].AliasTarget.DNSName" \
+  --output text | sed 's/\.$//')
+R2_KR=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+  --query "ResourceRecordSets[?Name=='${READ_HOST}.' && SetIdentifier=='<region 2>'].AliasTarget.DNSName" \
+  --output text | sed 's/\.$//')
+
+R1_KW_IP=$(dig +short "$R1_KW" @8.8.8.8 | head -1)
+R2_KR_IP=$(dig +short "$R2_KR" @8.8.8.8 | head -1)
+
+# grant editor on a new object via region 1
+curl -sS --resolve "${WRITE_HOST}:4467:${R1_KW_IP}" \
+  -X PUT -H 'Content-Type: application/json' \
+  "http://${WRITE_HOST}:4467/admin/relation-tuples" \
+  -d '{"namespace":"documents","object":"report-2026-q2","relation":"editor","subject_id":"user:bob"}'
+
+# check via region 2
+curl -sS --resolve "${READ_HOST}:4466:${R2_KR_IP}" \
+  "http://${READ_HOST}:4466/relation-tuples/check?\
+namespace=documents&object=report-2026-q2&relation=editor&subject_id=user:bob"
+----
+
+Expected: `{"allowed":true}` from the region-2 read after a single
+region-1 write.
 
 == Troubleshooting
 
