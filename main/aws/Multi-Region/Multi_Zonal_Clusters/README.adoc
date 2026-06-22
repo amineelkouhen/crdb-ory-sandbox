@@ -282,41 +282,12 @@ Expected: `"https://hydra-public.<sub>.<zone>/"`.
 
 === 5. End-to-end cross-region token
 
-Issue a token via region 1 and introspect it via region 2 by pinning
-each `curl` to that region's NLB IP with `--resolve`:
-
-[source,bash]
-----
-R1_HP=$(kubectl --context r1 -n ory get svc ory-hydra-public  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-R2_HA=$(kubectl --context r2 -n ory get svc ory-hydra-admin   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-R1_HA=$(kubectl --context r1 -n ory get svc ory-hydra-admin   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-
-R1_HP_IP=$(dig +short "$R1_HP" @8.8.8.8 | head -1)
-R2_HA_IP=$(dig +short "$R2_HA" @8.8.8.8 | head -1)
-
-# Create an OAuth2 client (via any Hydra pod)
-HYDRA_POD=$(kubectl --context r1 -n ory get pod -l app.kubernetes.io/name=hydra -o jsonpath='{.items[0].metadata.name}')
-kubectl --context r1 -n ory exec "$HYDRA_POD" -c hydra -- hydra create client \
-  --endpoint http://127.0.0.1:4445 --name mr-verify \
-  --grant-type client_credentials --scope openid --format json > /tmp/mr-client.json
-
-CID=$(jq -r .client_id     /tmp/mr-client.json)
-CSEC=$(jq -r .client_secret /tmp/mr-client.json)
-
-# Issue token via region 1
-TOKEN=$(curl -sS --resolve "hydra-public.${SUB}.${ZONE}:4444:${R1_HP_IP}" \
-  -u "${CID}:${CSEC}" -d 'grant_type=client_credentials&scope=openid' \
-  "http://hydra-public.${SUB}.${ZONE}:4444/oauth2/token" | jq -r .access_token)
-
-# Introspect via region 2
-curl -sS --resolve "hydra-admin.${SUB}.${ZONE}:4445:${R2_HA_IP}" \
-  -d "token=${TOKEN}" \
-  "http://hydra-admin.${SUB}.${ZONE}:4445/admin/oauth2/introspect" | jq .
-----
-
-Expected: introspect returns `"active": true`. This validates both
-cross-region CRDB read of the token row and the shared
-`secrets.system` value across regions.
+See <<testing-hydra-publicly>> below for the full Hydra lifecycle from
+your laptop, including the `--resolve` trick that pins each call to a
+specific region so a same-region round-trip cannot give a false pass.
+Expected: introspect against the peer region returns `"active": true`,
+which validates both cross-region CRDB read of the token row and the
+shared `secrets.system` value across regions.
 
 === 6. Istio cross-cluster service discovery
 
@@ -345,6 +316,154 @@ Expected: five `{"status":"ok"}` lines while the local Keto Deployment
 is at 0 replicas. The curl must run inside the `hydra` container, not
 the `istio-proxy` container; only the `hydra` container is intercepted
 by the sidecar's iptables rules.
+
+[[testing-hydra-publicly]]
+== Testing Hydra from outside (no bastion, no kubectl)
+
+Every Hydra endpoint, including the admin port, is published through
+the latency-routed Route 53 records. The whole OAuth2 lifecycle (create
+client, issue token, introspect, revoke) can run from a laptop using
+only `curl`. The bastion is only used at deploy time to bootstrap
+schemas and install Helm charts; the data plane is public.
+
+[source,bash]
+----
+export DEPLOY=amine_ory
+export SUB=$(echo "$DEPLOY" | tr '[:upper:]_' '[:lower:]-')
+export ZONE=demo.datacrafterslab.com
+
+BASE_PUB="http://hydra-public.${SUB}.${ZONE}:4444"
+BASE_ADM="http://hydra-admin.${SUB}.${ZONE}:4445"
+----
+
+=== Create an OAuth2 client
+
+[source,bash]
+----
+CLIENT=$(curl -sS -X POST -H 'Content-Type: application/json' \
+  -d '{
+        "client_name":"my-app",
+        "grant_types":["client_credentials"],
+        "scope":"openid",
+        "token_endpoint_auth_method":"client_secret_basic"
+      }' \
+  "${BASE_ADM}/admin/clients")
+
+CID=$(echo "$CLIENT"  | jq -r .client_id)
+CSEC=$(echo "$CLIENT" | jq -r .client_secret)
+echo "client_id=$CID  client_secret=$CSEC"
+----
+
+=== Issue and introspect (same region)
+
+Route 53 latency policy sends both calls to whichever region is closest
+to your resolver. This is the everyday production path.
+
+[source,bash]
+----
+TOKEN=$(curl -sS -u "${CID}:${CSEC}" \
+  -d 'grant_type=client_credentials&scope=openid' \
+  "${BASE_PUB}/oauth2/token" | jq -r .access_token)
+
+curl -sS -d "token=${TOKEN}" \
+  "${BASE_ADM}/admin/oauth2/introspect" | jq .
+----
+
+Expected: `"active": true`.
+
+=== Issue in one region, introspect in the other
+
+There is only one DNS name per service (the latency-routed record),
+so an unmodified `curl` cannot target a specific region: Route 53
+returns whichever region's NLB IPs are closest to your resolver, and
+*both* the token issue and the introspect land on the same region.
+The test then proves nothing about cross-region replication.
+
+To force each call to a specific region, look up that region's NLB
+IPs and pin the hostname to them with `curl --resolve`. The
+latency-routed record has two ALIAS targets, one per region; query
+them straight from Route 53 (no kubectl needed):
+
+[source,bash]
+----
+ZONE_ID=$(aws route53 list-hosted-zones-by-name --dns-name "${ZONE}." \
+  --query 'HostedZones[0].Id' --output text | sed 's|/hostedzone/||')
+
+# regional NLB DNS for hydra-public
+R1_HP=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+  --query "ResourceRecordSets[?Name=='hydra-public.${SUB}.${ZONE}.' && SetIdentifier=='<region 1>'].AliasTarget.DNSName" \
+  --output text | sed 's/\.$//')
+R2_HA=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+  --query "ResourceRecordSets[?Name=='hydra-admin.${SUB}.${ZONE}.' && SetIdentifier=='<region 2>'].AliasTarget.DNSName" \
+  --output text | sed 's/\.$//')
+
+R1_HP_IP=$(dig +short "$R1_HP"  @8.8.8.8 | head -1)
+R2_HA_IP=$(dig +short "$R2_HA"  @8.8.8.8 | head -1)
+----
+
+(`<region 1>` / `<region 2>` are the literal region strings used as
+`set_identifier` in `aws_route53_global.tf`, e.g. `us-east-1` and
+`us-east-2`.)
+
+Then issue in region 1, introspect in region 2:
+
+[source,bash]
+----
+TOKEN=$(curl -sS \
+  --resolve "hydra-public.${SUB}.${ZONE}:4444:${R1_HP_IP}" \
+  -u "${CID}:${CSEC}" \
+  -d 'grant_type=client_credentials&scope=openid' \
+  "${BASE_PUB}/oauth2/token" | jq -r .access_token)
+
+curl -sS \
+  --resolve "hydra-admin.${SUB}.${ZONE}:4445:${R2_HA_IP}" \
+  -d "token=${TOKEN}" \
+  "${BASE_ADM}/admin/oauth2/introspect" | jq .
+----
+
+Expected: `"active": true`. Three independent properties must line up
+for this to succeed:
+
+. Both regional Hydra deployments share the same `secrets.system` value
+  (pinned via `secret.secretsSystem` in `values_hydra.yaml`, otherwise
+  the chart auto-generates a different random key per region).
+. The token row written into `hydra.hydra_oauth2_access` by region 1's
+  Hydra is readable by region 2's Hydra, which only works if `SHOW
+  REGIONS FROM DATABASE hydra` reports both regions.
+. The HTTP request actually hits the region you intended, which only
+  `--resolve` can guarantee from a single client.
+
+Flip the IPs to test the reverse direction.
+
+=== Confirm which region answered
+
+Add `-w "\nhit=%{remote_ip}\n"` to any `curl` to print the NLB IP that
+served the response, so you can verify the latency policy (or your
+`--resolve`) routed it where you expected:
+
+[source,bash]
+----
+curl -sS -w "\nhit=%{remote_ip}\n" \
+  -u "${CID}:${CSEC}" -d 'grant_type=client_credentials&scope=openid' \
+  "${BASE_PUB}/oauth2/token"
+----
+
+=== Security caveat
+
+The admin ports (`:4445` Hydra, `:4433` Kratos, `:4467` Keto write) are
+publicly reachable and have no authentication. Anyone who can reach
+them can create OAuth2 clients, mutate identities, or write authz
+relations. This is acceptable for a sandbox; for anything beyond, do
+one of:
+
+* Flip `service.admin.type` to `ClusterIP` in the values files and
+  proxy admin traffic via the bastion or a VPN.
+* Put an auth proxy in front (Oathkeeper, ALB OIDC auth, Cloudflare
+  Access).
+* Restrict the admin NLBs' security groups to known CIDRs.
+
+The public-data ports (`:4444` Hydra, `:4434` Kratos, `:4466` Keto
+read) are designed for end-user / app traffic and are fine to expose.
 
 == Troubleshooting
 
