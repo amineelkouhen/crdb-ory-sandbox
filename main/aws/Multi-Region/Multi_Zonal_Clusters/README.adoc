@@ -44,9 +44,9 @@ set of latency-routed public DNS records under a wildcard hostname.
 * DNS: latency-routed `aws_route53_record` per service per region against
   the public `sko-iam-demo.com` zone. Subdomain prefix is derived from
   `var.deployment_name` (lower-cased, underscores replaced with dashes).
-* TLS: a wildcard ACM cert is pre-provisioned per region but the NLBs
-  themselves serve HTTP for the sandbox. Attach the cert to an Istio
-  ingress gateway or ALB Ingress Controller as a follow-up.
+* TLS: out of scope. NLBs serve HTTP for the sandbox. To promote to
+  HTTPS, add a wildcard ACM cert per region and attach it to an Istio
+  ingress gateway or ALB Ingress Controller.
 
 == Trade-off acknowledged
 
@@ -173,10 +173,10 @@ terraform plan   # expects zero changes
 
 == Open items / future work
 
-* TLS termination: wildcard cert is provisioned but not attached.
-  Promote the Istio east-west gateway or add an ALB Ingress Controller
-  with `certificate-arn` references to start serving HTTPS on the
-  configured ports.
+* TLS termination: NLBs serve HTTP today. Provision a wildcard ACM
+  cert per region and attach it via an Istio east-west gateway or an
+  ALB Ingress Controller (`certificate-arn`) to start serving HTTPS
+  on the configured ports.
 * Witness region: add a 1-node CRDB cluster in a third location to make
   writes survive a full-region loss.
 * Hydra/Kratos UI: only the APIs are deployed. Wire the

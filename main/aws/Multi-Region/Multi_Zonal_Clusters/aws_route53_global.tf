@@ -1,14 +1,14 @@
 ############################################################
-# Public DNS + ACM for the multi-region deployment
+# Public DNS for the multi-region deployment
 #
 # Subdomain layout (with deployment_name = "amine-ory"):
-#   hydra-public.amine-ory.sko-iam-demo.com
-#   hydra-admin.amine-ory.sko-iam-demo.com
-#   kratos-public.amine-ory.sko-iam-demo.com
-#   kratos-admin.amine-ory.sko-iam-demo.com
-#   keto-read.amine-ory.sko-iam-demo.com
-#   keto-write.amine-ory.sko-iam-demo.com
-#   crdb.amine-ory.sko-iam-demo.com
+#   hydra-public.amine-ory.<hosted_zone>
+#   hydra-admin.amine-ory.<hosted_zone>
+#   kratos-public.amine-ory.<hosted_zone>
+#   kratos-admin.amine-ory.<hosted_zone>
+#   keto-read.amine-ory.<hosted_zone>
+#   keto-write.amine-ory.<hosted_zone>
+#   crdb.amine-ory.<hosted_zone>
 #
 # Each subdomain has two latency-routed ALIAS A records (one per region),
 # pointing at the regional NLB. CRDB records use the network module's NLB
@@ -16,6 +16,10 @@
 # charts create when the bastion finishes installing the services; a
 # null_resource SSH-polls each bastion until all six LBs are ready so the
 # aws_lb data lookups never race the chart.
+#
+# NLBs serve HTTP only. TLS termination is intentionally out of scope; add
+# ACM certs + Istio Gateway (or ALB Ingress Controller) when promoting to
+# HTTPS.
 ############################################################
 
 locals {
@@ -44,83 +48,6 @@ data "aws_route53_zone" "primary" {
   provider     = aws.providerR1
   name         = var.hosted_zone
   private_zone = false
-}
-
-############################################################
-# ACM wildcard certificate per region
-#
-# Pre-provisioned for future TLS termination (Istio ingress
-# gateway or ALB Ingress Controller). The sandbox currently
-# serves HTTP on the NLBs; the certificate ARN is exported so
-# a follow-up change can attach it without re-validating DNS.
-############################################################
-
-resource "aws_acm_certificate" "wildcard_r1" {
-  provider          = aws.providerR1
-  domain_name       = "*.${local.deployment_subdomain}.${var.hosted_zone}"
-  validation_method = "DNS"
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-resource "aws_acm_certificate" "wildcard_r2" {
-  provider          = aws.providerR2
-  domain_name       = "*.${local.deployment_subdomain}.${var.hosted_zone}"
-  validation_method = "DNS"
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-resource "aws_route53_record" "cert_validation_r1" {
-  provider = aws.providerR1
-  for_each = {
-    for dvo in aws_acm_certificate.wildcard_r1.domain_validation_options : dvo.domain_name => {
-      name   = dvo.resource_record_name
-      record = dvo.resource_record_value
-      type   = dvo.resource_record_type
-    }
-  }
-
-  allow_overwrite = true
-  name            = each.value.name
-  records         = [each.value.record]
-  ttl             = 60
-  type            = each.value.type
-  zone_id         = data.aws_route53_zone.primary.zone_id
-}
-
-resource "aws_route53_record" "cert_validation_r2" {
-  provider = aws.providerR1
-  for_each = {
-    for dvo in aws_acm_certificate.wildcard_r2.domain_validation_options : dvo.domain_name => {
-      name   = dvo.resource_record_name
-      record = dvo.resource_record_value
-      type   = dvo.resource_record_type
-    }
-  }
-
-  allow_overwrite = true
-  name            = each.value.name
-  records         = [each.value.record]
-  ttl             = 60
-  type            = each.value.type
-  zone_id         = data.aws_route53_zone.primary.zone_id
-}
-
-resource "aws_acm_certificate_validation" "wildcard_r1" {
-  provider                = aws.providerR1
-  certificate_arn         = aws_acm_certificate.wildcard_r1.arn
-  validation_record_fqdns = [for record in aws_route53_record.cert_validation_r1 : record.fqdn]
-}
-
-resource "aws_acm_certificate_validation" "wildcard_r2" {
-  provider                = aws.providerR2
-  certificate_arn         = aws_acm_certificate.wildcard_r2.arn
-  validation_record_fqdns = [for record in aws_route53_record.cert_validation_r2 : record.fqdn]
 }
 
 ############################################################
@@ -306,12 +233,4 @@ output "ory_endpoint_urls" {
 output "crdb_sql_url" {
   description = "Public latency-routed CRDB SQL gateway."
   value       = "postgresql://root@crdb.${local.deployment_subdomain}.${var.hosted_zone}:26257/defaultdb?sslmode=disable"
-}
-
-output "wildcard_cert_arns" {
-  description = "ACM wildcard certificate ARNs per region (for follow-up TLS termination work)."
-  value = {
-    region_1 = aws_acm_certificate_validation.wildcard_r1.certificate_arn
-    region_2 = aws_acm_certificate_validation.wildcard_r2.certificate_arn
-  }
 }
