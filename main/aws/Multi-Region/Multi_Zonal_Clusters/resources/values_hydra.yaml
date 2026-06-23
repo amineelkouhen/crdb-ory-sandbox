@@ -22,8 +22,6 @@ service:
     name: hydra-http-admin
 maester:
   enabled: false
-secret:
-  secretsSystem: ${SYSTEM_SECRET}
 job:
   podMetadata:
     annotations:
@@ -43,6 +41,6 @@ hydra:
       self:
         issuer: ${ISSUER_URL}
         public: ${ISSUER_URL}
-  secrets:
-    system:
-      - ${SYSTEM_SECRET}
+    secrets:
+      system:
+        - ${SYSTEM_SECRET}

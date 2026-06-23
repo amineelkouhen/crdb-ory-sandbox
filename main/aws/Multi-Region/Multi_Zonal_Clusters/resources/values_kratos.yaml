@@ -20,9 +20,6 @@ service:
       service.beta.kubernetes.io/aws-load-balancer-type: nlb
     port: ${PUBLIC_PORT}
     name: kratos-http-public
-secret:
-  secretsDefault: ${KRATOS_DEFAULT_SECRET}
-  secretsCookie: ${KRATOS_COOKIE_SECRET}
 job:
   podMetadata:
     annotations:
@@ -46,10 +43,10 @@ kratos:
       schemas:
         - id: default
           url: https://raw.githubusercontent.com/amineelkouhen/crdb-ory-sandbox/refs/heads/main/main/aws/Multi-Region/Multi_Zonal_Clusters/resources/identity.default.schema.json
-  secrets:
-    default:
-      - ${KRATOS_DEFAULT_SECRET}
-    cookie:
-      - ${KRATOS_COOKIE_SECRET}
+    secrets:
+      default:
+        - ${KRATOS_DEFAULT_SECRET}
+      cookie:
+        - ${KRATOS_COOKIE_SECRET}
 courier:
   enabled: false
