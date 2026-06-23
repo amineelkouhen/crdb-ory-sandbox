@@ -24,6 +24,10 @@ maester:
   enabled: false
 secret:
   secretsSystem: ${SYSTEM_SECRET}
+job:
+  podMetadata:
+    annotations:
+      sidecar.istio.io/inject: "false"
 hydra:
   dev: true
   automigration:

@@ -24,6 +24,10 @@ service:
     appProtocol: http
     headless:
       enabled: false
+job:
+  podMetadata:
+    annotations:
+      sidecar.istio.io/inject: "false"
 keto:
   automigration:
     enabled: true

@@ -275,7 +275,7 @@ CAKEY
   sudo mv ./keto /usr/local/bin/
   echo "$(date) - 📦 Deploy Hydra in EKS ☸️" >> /home/${var.ssh_user}/prepare_client.log
   sudo -H -u ${var.ssh_user} bash -c 'kubectl create secret docker-registry ory-oel-gcr-secret --docker-server=europe-docker.pkg.dev --docker-username=_json_key --docker-password="$(cat /home/${var.ssh_user}/credentials.json)" --namespace ory --dry-run=client -o yaml | kubectl apply -f -' >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  sudo -H -u ${var.ssh_user} bash -c 'helm upgrade --install ory-hydra ory/hydra --namespace ory -f /home/${var.ssh_user}/values_hydra.yaml' >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  sudo -H -u ${var.ssh_user} bash -c 'helm upgrade --install ory-hydra ory/hydra --namespace ory --timeout 20m -f /home/${var.ssh_user}/values_hydra.yaml' >> /home/${var.ssh_user}/prepare_client.log 2>&1
   sleep 20
   hydra_admin_hostname=$(kubectl get svc --namespace ory ory-hydra-admin --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
   hydra_public_hostname=$(kubectl get svc --namespace ory ory-hydra-public --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
@@ -289,7 +289,7 @@ CAKEY
   echo "export HYDRA_PUBLIC_URL=http://$hydra_public_hostname:${var.hydra_public_port}" >> /home/${var.ssh_user}/.bashrc
   echo "✅ Hydra API is up." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - 📦 Deploy Kratos in EKS ☸️" >> /home/${var.ssh_user}/prepare_client.log
-  sudo -H -u ${var.ssh_user} bash -c 'helm upgrade --install ory-kratos ory/kratos --namespace ory -f /home/${var.ssh_user}/values_kratos.yaml' >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  sudo -H -u ${var.ssh_user} bash -c 'helm upgrade --install ory-kratos ory/kratos --namespace ory --timeout 20m -f /home/${var.ssh_user}/values_kratos.yaml' >> /home/${var.ssh_user}/prepare_client.log 2>&1
   sleep 20
   kratos_admin_hostname=$(kubectl get svc --namespace ory ory-kratos-admin --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
   kratos_public_hostname=$(kubectl get svc --namespace ory ory-kratos-public --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
@@ -303,7 +303,7 @@ CAKEY
   echo "export KRATOS_PUBLIC_URL=http://$kratos_public_hostname:${var.kratos_public_port}" >> /home/${var.ssh_user}/.bashrc
   echo "✅ Kratos API is up." >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - 📦 Deploy Keto in EKS ☸️" >> /home/${var.ssh_user}/prepare_client.log
-  sudo -H -u ${var.ssh_user} bash -c 'helm upgrade --install ory-keto ory/keto -f /home/${var.ssh_user}/values_keto.yaml --namespace ory' >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  sudo -H -u ${var.ssh_user} bash -c 'helm upgrade --install ory-keto ory/keto -f /home/${var.ssh_user}/values_keto.yaml --namespace ory --timeout 20m' >> /home/${var.ssh_user}/prepare_client.log 2>&1
   sleep 20
   keto_read_hostname=$(kubectl get svc --namespace ory ory-keto-read --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
   keto_write_hostname=$(kubectl get svc --namespace ory ory-keto-write --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
