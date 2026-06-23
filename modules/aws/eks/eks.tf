@@ -9,14 +9,14 @@ terraform {
 
 # EKS Cluster Resources
 resource "aws_eks_cluster" "eks" {
-  name                 = "${var.deployment_name}-ory-cluster"
-  version              = var.cluster_version
-  role_arn             = aws_iam_role.cluster.arn
+  name     = "${var.deployment_name}-ory-cluster"
+  version  = var.cluster_version
+  role_arn = local.cluster_role_arn
 
   vpc_config {
-    endpoint_public_access  = true
-    security_group_ids = [aws_security_group.cluster.id]
-    subnet_ids         = aws_subnet.public-subnets.*.id
+    endpoint_public_access = true
+    security_group_ids     = [aws_security_group.cluster.id]
+    subnet_ids             = aws_subnet.public-subnets.*.id
   }
 
   depends_on = [
@@ -27,16 +27,16 @@ resource "aws_eks_cluster" "eks" {
 
 
 resource "aws_eks_node_group" "eks-node-group" {
-  cluster_name    = aws_eks_cluster.eks.name
-  node_group_name = "${var.deployment_name}-default-node-group"
-  node_role_arn   = aws_iam_role.node.arn
-  subnet_ids      = aws_subnet.public-subnets.*.id
-  capacity_type   = "ON_DEMAND"
+  cluster_name           = aws_eks_cluster.eks.name
+  node_group_name        = "${var.deployment_name}-default-node-group"
+  node_role_arn          = local.node_role_arn
+  subnet_ids             = aws_subnet.public-subnets.*.id
+  capacity_type          = "ON_DEMAND"
   node_group_name_prefix = null #"Creates a unique name beginning with the specified prefix. Conflicts with node_group_name"
   scaling_config {
-    desired_size  = var.cluster_size
-    max_size      = var.cluster_size
-    min_size      = 1
+    desired_size = var.cluster_size
+    max_size     = var.cluster_size
+    min_size     = 1
   }
   update_config {
     max_unavailable = 1

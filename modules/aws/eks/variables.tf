@@ -35,3 +35,14 @@ variable "subnets_cidrs" {
 variable "resource_tags" {
   description = "hash with tags for all resources"
 }
+
+# When the caller lacks iam:CreateRole (typical for non-admin SSO roles), set
+# shared_iam_role_name to an existing role that trusts both eks.amazonaws.com
+# and ec2.amazonaws.com and has the EKS cluster + worker + CNI + ECR-read
+# policies attached. The module will then skip creating new roles and pass the
+# shared role as both the cluster role and the node-group role.
+variable "shared_iam_role_name" {
+  description = "Name of an existing IAM role to reuse for both the EKS cluster role and the node-group role. Leave empty to create per-deployment roles (requires iam:CreateRole)."
+  type        = string
+  default     = ""
+}

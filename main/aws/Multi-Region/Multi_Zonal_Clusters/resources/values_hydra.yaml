@@ -22,6 +22,8 @@ service:
     name: hydra-http-admin
 maester:
   enabled: false
+secret:
+  secretsSystem: ${SYSTEM_SECRET}
 hydra:
   dev: true
   automigration:
@@ -33,3 +35,10 @@ hydra:
       admin:
         port: ${ADMIN_PORT}
     dsn: "cockroach://root@${CRDB_FQDN}:26257/hydra?sslmode=disable"
+    urls:
+      self:
+        issuer: ${ISSUER_URL}
+        public: ${ISSUER_URL}
+  secrets:
+    system:
+      - ${SYSTEM_SECRET}

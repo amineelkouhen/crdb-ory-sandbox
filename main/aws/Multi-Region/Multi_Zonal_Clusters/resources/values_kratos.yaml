@@ -20,6 +20,9 @@ service:
       service.beta.kubernetes.io/aws-load-balancer-type: nlb
     port: ${PUBLIC_PORT}
     name: kratos-http-public
+secret:
+  secretsDefault: ${KRATOS_DEFAULT_SECRET}
+  secretsCookie: ${KRATOS_COOKIE_SECRET}
 kratos:
   development: true
   automigration:
@@ -30,6 +33,7 @@ kratos:
         port: ${ADMIN_PORT}
       public:
         port: ${PUBLIC_PORT}
+        base_url: ${KRATOS_PUBLIC_BASE_URL}
     dsn: "cockroach://root@${CRDB_FQDN}:26257/kratos"
     selfservice:
       default_browser_return_url: "http://127.0.0.1/home"
@@ -37,6 +41,11 @@ kratos:
       default_schema_id: default
       schemas:
         - id: default
-          url: https://raw.githubusercontent.com/amineelkouhen/crdb-ory-sandbox/refs/heads/main/main/aws/Single-Region-Multi-AZ/resources/identity.default.schema.json
+          url: https://raw.githubusercontent.com/amineelkouhen/crdb-ory-sandbox/refs/heads/main/main/aws/Multi-Region/Multi_Zonal_Clusters/resources/identity.default.schema.json
+  secrets:
+    default:
+      - ${KRATOS_DEFAULT_SECRET}
+    cookie:
+      - ${KRATOS_COOKIE_SECRET}
 courier:
   enabled: false

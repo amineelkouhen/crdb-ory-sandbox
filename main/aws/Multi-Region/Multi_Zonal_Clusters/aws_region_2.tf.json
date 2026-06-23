@@ -1,0 +1,172 @@
+{
+    "provider": {
+        "aws": [
+            {
+                "region": "${var.regions[1]}",
+                "access_key": "${var.aws_access_key}",
+                "secret_key": "${var.aws_secret_key}",
+                "token": "${var.aws_session_token}",
+                "alias": "providerR2"
+            },
+            {
+                "region": "${var.regions[1]}",
+                "access_key": "${var.aws_access_key}",
+                "secret_key": "${var.aws_secret_key}",
+                "token": "${var.aws_session_token}",
+                "alias": "clientProviderR2"
+            }
+        ]
+    },
+    "module": {
+        "network-vpc-2": {
+            "source": "../../../../modules/aws/network",
+            "name": "${var.deployment_name}-region2",
+            "vpc_cidr": "${var.crdb_vpc_cidr[1]}",
+            "resource_tags": {},
+            "subnets_cidrs": "${var.crdb_subnets[1]}",
+            "providers": {
+                "aws": "aws.providerR2"
+            }
+        },
+        "keypair-2": {
+            "source": "../../../../modules/aws/keypair",
+            "name": "${var.deployment_name}-region2",
+            "ssh_public_key": "${var.ssh_public_key}",
+            "resource_tags": {},
+            "providers": {
+                "aws": "aws.providerR2"
+            }
+        },
+        "crdb-cluster-2": {
+            "source": "../../../../modules/aws/cr",
+            "name": "${var.deployment_name}-region2",
+            "worker_count": "${var.crdb_cluster_size[1]}",
+            "machine_type": "${var.crdb_machine_type}",
+            "machine_image": "${var.crdb_machine_images[1]}",
+            "resource_tags": {},
+            "ssh_user": "${var.ssh_user}",
+            "ssh_public_key": "${var.ssh_public_key}",
+            "ssh_key_name": "${module.keypair-2.key-name}",
+            "security_groups": "${module.network-vpc-2.security-groups}",
+            "region": "${var.regions[1]}",
+            "availability_zones": "${keys(var.crdb_subnets[1])}",
+            "subnets": "${module.network-vpc-2.subnets}",
+            "cockroach_release": "${var.crdb_release}",
+            "cluster_join_ips": "${concat(module.crdb-cluster-1.cr-private-ips, module.crdb-cluster-2.cr-private-ips)}",
+            "boot_disk_size": "${var.crdb_volume_size}",
+            "boot_disk_type": "${var.crdb_volume_type}",
+            "sql_load_balancer_arn": "${module.network-vpc-2.sql_load_balancer_target_group}",
+            "console_load_balancer_arn": "${module.network-vpc-2.console_load_balancer_target_group}",
+            "init": false,
+            "providers": {
+                "aws": "aws.providerR2"
+            }
+        },
+        "ory-cluster-2": {
+            "source": "../../../../modules/aws/eks",
+            "deployment_name": "${var.deployment_name}-region2",
+            "cluster_version": "${var.eks_version}",
+            "vpc_cidr": "${var.eks_vpc_cidr[1]}",
+            "subnets_cidrs": "${var.eks_public_subnets[1]}",
+            "machine_type": "${var.eks_machine_type}",
+            "machine_image": "${var.eks_machine_image}",
+            "cluster_size": "${var.eks_cluster_size}",
+            "disk_size": "${var.eks_volume_size}",
+            "shared_iam_role_name": "${var.shared_eks_iam_role_name}",
+            "resource_tags": {},
+            "providers": {
+                "aws": "aws.providerR2"
+            }
+        },
+        "client-network-2": {
+            "source": "../../../../modules/aws/client-network",
+            "name": "${var.deployment_name}-region2-client",
+            "client_vpc_cidr": "${var.client_vpc_cidr[1]}",
+            "resource_tags": {},
+            "client_subnet_cidr": "${var.client_subnet[1]}",
+            "providers": {
+                "aws": "aws.clientProviderR2"
+            }
+        },
+        "client-keypair-2": {
+            "source": "../../../../modules/aws/keypair",
+            "name": "${var.deployment_name}-region2-client",
+            "ssh_public_key": "${var.ssh_public_key}",
+            "resource_tags": {},
+            "providers": {
+                "aws": "aws.clientProviderR2"
+            }
+        },
+        "bastion-2": {
+            "source": "../../../../modules/aws/bastion",
+            "name": "${var.deployment_name}-region2",
+            "subnet": "${module.client-network-2.client_subnets.id}",
+            "availability_zone": "${keys(var.client_subnet[1])[0]}",
+            "security_groups": "${module.client-network-2.client-security-groups}",
+            "machine_image": "${var.client_machine_image[1]}",
+            "machine_type": "${var.client_machine_type}",
+            "cluster_fqdn": "${module.network-vpc-2.nlb_dns_name}",
+            "hydra_image": "${var.hydra_image}",
+            "hydra_release": "${var.hydra_release_tag}",
+            "hydra_admin_port": "${var.hydra_admin_port}",
+            "hydra_public_port": "${var.hydra_public_port}",
+            "kratos_image": "${var.kratos_image}",
+            "kratos_release": "${var.kratos_release_tag}",
+            "kratos_admin_port": "${var.kratos_admin_port}",
+            "kratos_public_port": "${var.kratos_public_port}",
+            "keto_image": "${var.keto_image}",
+            "keto_release": "${var.keto_release_tag}",
+            "keto_read_port": "${var.keto_read_port}",
+            "keto_write_port": "${var.keto_write_port}",
+            "cluster_organization": "${var.organization_name}",
+            "cluster_license": "${var.cluster_license}",
+            "cockroach_release": "${var.crdb_release}",
+            "k8s_cluster_name": "${module.ory-cluster-2.cluster_name}",
+            "simulator_repository": "${var.ory_simulator_repository}",
+            "regions": ["${var.regions[1]}"],
+            "resource_tags": {},
+            "ssh_user": "${var.ssh_user}",
+            "ssh_public_key": "${var.ssh_public_key}",
+            "ssh_private_key": "${var.ssh_private_key}",
+            "ssh_key_name": "${module.client-keypair-2.key-name}",
+            "init_schema": false,
+            "multi_region": true,
+            "peer_init_marker_table": "hydra.hydra_client",
+            "crdb_multi_region_sql": "",
+            "crdb_node_map_sql": "${var.crdb_node_map_sql}",
+            "hydra_issuer_url": "https://hydra-public.${local.deployment_subdomain}.${var.hosted_zone}/",
+            "kratos_public_base_url": "https://kratos-public.${local.deployment_subdomain}.${var.hosted_zone}/",
+            "hydra_system_secret": "${var.hydra_system_secret}",
+            "kratos_default_secret": "${var.kratos_default_secret}",
+            "kratos_cookie_secret": "${var.kratos_cookie_secret}",
+            "istio_root_ca_cert": "${var.istio_root_ca_cert}",
+            "istio_root_ca_key": "${var.istio_root_ca_key}",
+            "istio_cluster_name": "${var.istio_cluster_names[1]}",
+            "istio_network_name": "${var.istio_network_names[1]}",
+            "dependencies": "${concat(module.crdb-cluster-1.cr-private-ips, module.crdb-cluster-2.cr-private-ips, [module.bastion-1.public-ip])}",
+            "providers": {
+                "aws": "aws.clientProviderR2"
+            }
+        }
+    },
+    "output": {
+        "crdb-cluster-2-public-ips": {
+            "value": "${module.crdb-cluster-2.cr-public-ips}"
+        },
+        "crdb-cluster-2-private-ips": {
+            "value": "${module.crdb-cluster-2.cr-private-ips}"
+        },
+        "crdb-cluster-2-nlb-dns": {
+            "value": "${module.network-vpc-2.nlb_dns_name}"
+        },
+        "ory-cluster-2-endpoint": {
+            "value": "${module.ory-cluster-2.cluster_endpoint}"
+        },
+        "ory-cluster-2-name": {
+            "value": "${module.ory-cluster-2.cluster_name}"
+        },
+        "bastion-2-public-ip": {
+            "value": "${module.bastion-2.public-ip}"
+        }
+    }
+}

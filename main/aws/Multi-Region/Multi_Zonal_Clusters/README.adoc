@@ -1,0 +1,792 @@
+= Multi-Region Active-Active Ory (Hydra / Kratos / Keto) on CockroachDB
+
+Two AWS regions, two EKS clusters joined by an Istio multi-primary mesh,
+one logical multi-region CockroachDB cluster spanning both, and a single
+set of latency-routed public DNS records under a wildcard hostname.
+
+== Topology
+
+----
+                       <hosted_zone> (public Route 53)
+                                  │
+        ┌─────────────────────────┴─────────────────────────┐
+        │   *.<deployment_name>.<hosted_zone>  (latency)    │
+        └─────────────┬──────────────────────┬──────────────┘
+                      │                      │
+                  region 1                region 2
+              ┌────────────────┐     ┌────────────────┐
+              │  CRDB VPC      │◄────┤  CRDB VPC      │  VPC peering
+              │  3 nodes / AZ  │     │  3 nodes / AZ  │  pcx-...
+              └───────┬────────┘     └───────┬────────┘
+                      │                      │
+              ┌───────┴────────┐     ┌───────┴────────┐
+              │  EKS region1   │◄═══►│  EKS region2   │  Istio mesh
+              │  istiod +      │     │  istiod +      │  east-west GW
+              │  east-west GW  │     │  east-west GW  │  on NLB :15443
+              │  Hydra/Kratos/ │     │  Hydra/Kratos/ │
+              │  Keto pods     │     │  Keto pods     │
+              └───────┬────────┘     └───────┬────────┘
+                      │                      │
+              ┌───────┴────────┐     ┌───────┴────────┐
+              │  Bastion-1     │     │  Bastion-2     │
+              │  init_schema=  │     │  init_schema=  │
+              │  true          │     │  false (waits) │
+              └────────────────┘     └────────────────┘
+----
+
+Resource naming convention: every regional resource is prefixed with
+`<deployment_name>-region1` or `<deployment_name>-region2`. Cross-region
+artefacts (peering, Route 53 records, mesh secrets) carry no region
+infix.
+
+== Components
+
+CRDB::
+  One logical multi-region cluster, 3 nodes per region. Region 1's
+  bastion runs the cluster initializer plus all schema DDL. Region 2's
+  bastion polls `hydra.hydra_client` to confirm the initializer has
+  finished before installing its Helm charts, so the two never race
+  on `DROP DATABASE`.
+
+CRDB schema locality::
+  `var.crdb_multi_region_sql` applies, per database:
+  `PRIMARY REGION = <region 1>`, `ADD REGION <region 2>`, `SURVIVE ZONE
+  FAILURE`. This is run once, by the initializer bastion, right after
+  the `CREATE DATABASE` statements.
+
+CRDB DB Console Node Map::
+  `var.crdb_node_map_sql` `UPSERT`s into `system.locations` so the DB
+  Console renders each region/zone on a world map. UPSERT keeps it
+  idempotent if both bastions ever run it.
+
+EKS + Istio::
+  One EKS cluster per region, one istiod per cluster, sharing a root
+  CA supplied via `var.istio_root_ca_cert` / `var.istio_root_ca_key`.
+  Each cluster runs an east-west gateway exposed on a public NLB on
+  port 15443 for cross-cluster mTLS. `null_resource.istio_remote_secret_*`
+  exchanges `istio-remote-secret-<peer-region>` between the two clusters
+  so each istiod can discover the other's services.
+
+Ory services::
+  Hydra (public 4444, admin 4445), Kratos (public 4434, admin 4433),
+  Keto (read 4466, write 4467). Each service is exposed via a per-region
+  AWS Network Load Balancer (`service.beta.kubernetes.io/aws-load-balancer-type:
+  nlb`). The shared `secrets.system` / `secretsDefault` / `secretsCookie`
+  values are pinned into the chart-generated `ory-hydra` and `ory-kratos`
+  Secrets via the top-level `secret.secrets*` keys so every region resolves
+  the same key. Without this, the chart auto-generates per-region random
+  values and cross-region introspection fails.
+
+DNS::
+  `aws_route53_global.tf` creates a latency-routed alias record per
+  service per region (`set_identifier = <region>`, `latency_routing_policy
+  { region = ... }`) against the wildcard hostname
+  `*.<deployment_name>.<hosted_zone>`. The subdomain prefix is computed
+  in Terraform as `lower(replace(var.deployment_name, "_", "-"))` so a
+  deployment named `amine_ory` lands under `amine-ory.<hosted_zone>`.
+
+TLS::
+  Out of scope. NLBs serve HTTP on the Ory service ports. To promote to
+  HTTPS, attach a wildcard ACM cert to an Istio ingress gateway or an
+  ALB Ingress Controller and re-point the Route 53 aliases.
+
+== Trade-off acknowledged
+
+Two regions with three replicas each cannot survive a full-region outage
+for writes: a region loss takes 3 of 6 replicas with it, so no range
+ever has a 2/3 quorum. Reads from the surviving region keep working
+(historical, follower) but new writes block until the lost region
+recovers. Adding a small witness node in a third region/AZ later is the
+fix and is intentionally deferred.
+
+== Variables to supply
+
+Most variables ship with sensible defaults (regions, CIDRs, sizing,
+images, ports). The following must be set at apply time:
+
+[cols="1,3"]
+|===
+| Variable | Purpose
+
+| `deployment_name`
+| Resource prefix and DNS subdomain root. `amine_ory` becomes
+  `amine-ory.<hosted_zone>`.
+
+| `aws_access_key` / `aws_secret_key` / `aws_session_token`
+| AWS credentials used by both region providers and the operator-side
+  `aws eks update-kubeconfig` step.
+
+| `cluster_license`
+| CockroachDB enterprise license string.
+
+| `hydra_system_secret`
+| Shared Hydra `secrets.system`. Must be byte-identical across regions so
+  tokens issued by Hydra in one region decrypt/verify in the other.
+
+| `kratos_default_secret` / `kratos_cookie_secret`
+| Shared Kratos session and cookie secrets, also byte-identical across
+  regions.
+
+| `istio_root_ca_cert` / `istio_root_ca_key`
+| PEM-encoded shared Istio root CA. Must match across regions; do not
+  regenerate per region.
+|===
+
+Variables with defaults worth knowing about:
+
+[cols="1,3"]
+|===
+| Variable | Default
+
+| `regions`
+| `["ap-south-1", "ap-south-2"]`. Override via tfvars to relocate the
+  pair, e.g. `regions = ["us-east-1", "us-east-2"]`.
+
+| `hosted_zone`
+| `demo.datacrafterslab.com`. The zone must already exist in Route 53 with
+  working public NS delegation.
+
+| `crdb_multi_region_sql`
+| `ALTER DATABASE ... PRIMARY REGION / ADD REGION / SURVIVE` block. The
+  region names inside must match what `SHOW REGIONS FROM CLUSTER` reports.
+
+| `crdb_node_map_sql`
+| UPSERT into `system.locations` for region + zone coordinates. Empty
+  string disables the Node Map.
+
+| `shared_eks_iam_role_name`
+| Empty by default (per-deployment IAM roles, requires `iam:CreateRole`).
+  Set to an existing role that trusts both `eks.amazonaws.com` and
+  `ec2.amazonaws.com` if your principal cannot create roles (typical
+  for SSO permission sets).
+|===
+
+Generate the Istio root CA once and re-use the same PEMs across applies:
+
+[source,bash]
+----
+openssl req -x509 -sha256 -newkey rsa:4096 -nodes \
+  -keyout istio-root-ca.key -out istio-root-ca.pem -days 3650 \
+  -subj "/O=ory-mesh/CN=ory-mesh root"
+----
+
+Generate the Hydra / Kratos shared secrets:
+
+[source,bash]
+----
+openssl rand -hex 32   # hydra_system_secret
+openssl rand -hex 32   # kratos_default_secret
+openssl rand -hex 32   # kratos_cookie_secret
+----
+
+== Deploy
+
+[source,bash]
+----
+cd main/aws/Multi-Region/Multi_Zonal_Clusters
+terraform init
+terraform apply -var-file=terraform.tfvars
+----
+
+Order of operations inside one `terraform apply`:
+
+. Both region VPCs, EKS clusters, CRDB EC2 nodes, and bastions are
+  provisioned in parallel.
+. `module.bastion-1` (region 1):
+.. Installs the CRDB CLI, waits for the cluster to be reachable.
+.. Applies the cluster license, then UPSERTs `system.locations` for the
+   Node Map (when `var.crdb_node_map_sql` is non-empty).
+.. `DROP DATABASE IF EXISTS / CREATE DATABASE` for hydra, kratos, keto.
+.. Applies `var.crdb_multi_region_sql` (PRIMARY/ADD REGION/SURVIVE).
+.. `istioctl install` multi-primary + east-west gateway.
+.. `helm install` Hydra / Kratos / Keto.
+. `module.bastion-2` (region 2):
+.. Same prep but skips `DROP/CREATE`.
+.. Polls `hydra.hydra_client LIMIT 1` until the initializer has finished.
+.. `istioctl install` + `helm install` of all three Ory charts.
+. `null_resource.wait_for_ory_lbs_r1/r2` SSH-poll each bastion until every
+  Ory `Service` has a `LoadBalancer ingress hostname`.
+. `data.aws_lb.ory_r1/r2` look up each NLB by tag.
+. `aws_route53_record.ory_r1/r2` + `crdb_r1/r2` create the 7 × 2
+  latency-routed records.
+. `null_resource.istio_remote_secret_*` runs `istioctl create-remote-secret`
+  on each cluster and applies it to the peer.
+
+The full apply takes ~75 minutes end-to-end (EKS cluster creation alone
+is ~15 minutes per region; the wait-for-LBs step accounts for most of
+the bastion-2 tail).
+
+== Verify
+
+Set up convenience aliases first:
+
+[source,bash]
+----
+export DEPLOY=amine_ory                                   # var.deployment_name
+export SUB=$(echo "$DEPLOY" | tr '[:upper:]_' '[:lower:]-')
+export ZONE=demo.datacrafterslab.com                      # var.hosted_zone
+
+aws eks update-kubeconfig --region <region 1> --name "${DEPLOY}-region1-ory-cluster" --alias r1
+aws eks update-kubeconfig --region <region 2> --name "${DEPLOY}-region2-ory-cluster" --alias r2
+
+BASTION1=$(terraform output -raw bastion-1-public-ip)
+BASTION2=$(terraform output -raw bastion-2-public-ip)
+CRDB1_NLB=$(terraform output -raw crdb-cluster-1-nlb-dns)
+----
+
+=== 1. CRDB cluster health
+
+[source,bash]
+----
+ssh -i ~/.ssh/id_rsa ubuntu@${BASTION1} \
+  "cockroach sql --insecure --url 'postgresql://root@${CRDB1_NLB}:26257' \
+   -e 'SHOW REGIONS FROM CLUSTER;'"
+----
+
+Expected: both regions listed with three zones each.
+
+=== 2. Per-database multi-region locality
+
+[source,bash]
+----
+ssh -i ~/.ssh/id_rsa ubuntu@${BASTION1} \
+  "cockroach sql --insecure --url 'postgresql://root@${CRDB1_NLB}:26257' \
+   -e 'SHOW DATABASES;'"
+----
+
+Expected: `hydra`, `kratos`, `keto` rows each show `primary_region =
+<region 1>`, `regions = {<region 1>, <region 2>}`, `survival_goal = zone`.
+
+=== 3. Public DNS resolution from outside AWS
+
+[source,bash]
+----
+for svc in hydra-public hydra-admin kratos-public kratos-admin \
+           keto-read keto-write crdb; do
+  echo "=== ${svc}.${SUB}.${ZONE} ==="
+  dig +short "${svc}.${SUB}.${ZONE}" @8.8.8.8
+done
+----
+
+Expected: each record returns the NLB IPs of one regional NLB (latency
+policy picks whichever region the resolver is closest to).
+
+=== 4. OIDC discovery
+
+[source,bash]
+----
+curl -s "http://hydra-public.${SUB}.${ZONE}:4444/.well-known/openid-configuration" | jq .issuer
+----
+
+Expected: `"https://hydra-public.<sub>.<zone>/"`.
+
+=== 5. End-to-end cross-region token
+
+See <<testing-hydra-publicly>> below for the full Hydra lifecycle from
+your laptop, including the `--resolve` trick that pins each call to a
+specific region so a same-region round-trip cannot give a false pass.
+Expected: introspect against the peer region returns `"active": true`,
+which validates both cross-region CRDB read of the token row and the
+shared `secrets.system` value across regions.
+
+=== 6. Istio cross-cluster service discovery
+
+Scale region 1's Keto to zero so the local Service has no endpoints,
+then `curl` Keto's cluster-local DNS name from a Hydra pod in region 1.
+Envoy must route through the east-west gateway to region 2:
+
+[source,bash]
+----
+HYDRA_POD=$(kubectl --context r1 -n ory get pod -l app.kubernetes.io/name=hydra -o jsonpath='{.items[0].metadata.name}')
+
+kubectl --context r1 -n ory scale deploy ory-keto --replicas=0
+kubectl --context r1 -n ory wait --for=delete pod -l app.kubernetes.io/name=keto --timeout=60s
+
+for i in 1 2 3 4 5; do
+  kubectl --context r1 -n ory exec "$HYDRA_POD" -c hydra -- \
+    wget -qO- -T5 http://ory-keto-read.ory.svc.cluster.local:4466/health/alive
+done
+
+# restore
+kubectl --context r1 -n ory scale deploy ory-keto --replicas=1
+kubectl --context r1 -n ory rollout status deploy ory-keto --timeout=120s
+----
+
+Expected: five `{"status":"ok"}` lines while the local Keto Deployment
+is at 0 replicas. The curl must run inside the `hydra` container, not
+the `istio-proxy` container; only the `hydra` container is intercepted
+by the sidecar's iptables rules.
+
+[[testing-hydra-publicly]]
+== Testing Hydra from outside (no bastion, no kubectl)
+
+Every Hydra endpoint, including the admin port, is published through
+the latency-routed Route 53 records. The whole OAuth2 lifecycle (create
+client, issue token, introspect, revoke) can run from a laptop using
+only `curl`. The bastion is only used at deploy time to bootstrap
+schemas and install Helm charts; the data plane is public.
+
+[source,bash]
+----
+export DEPLOY=amine_ory
+export SUB=$(echo "$DEPLOY" | tr '[:upper:]_' '[:lower:]-')
+export ZONE=demo.datacrafterslab.com
+
+BASE_PUB="http://hydra-public.${SUB}.${ZONE}:4444"
+BASE_ADM="http://hydra-admin.${SUB}.${ZONE}:4445"
+----
+
+=== Create an OAuth2 client
+
+[source,bash]
+----
+CLIENT=$(curl -sS -X POST -H 'Content-Type: application/json' \
+  -d '{
+        "client_name":"my-app",
+        "grant_types":["client_credentials"],
+        "scope":"openid",
+        "token_endpoint_auth_method":"client_secret_basic"
+      }' \
+  "${BASE_ADM}/admin/clients")
+
+CID=$(echo "$CLIENT"  | jq -r .client_id)
+CSEC=$(echo "$CLIENT" | jq -r .client_secret)
+echo "client_id=$CID  client_secret=$CSEC"
+----
+
+=== Issue and introspect (same region)
+
+Route 53 latency policy sends both calls to whichever region is closest
+to your resolver. This is the everyday production path.
+
+[source,bash]
+----
+TOKEN=$(curl -sS -u "${CID}:${CSEC}" \
+  -d 'grant_type=client_credentials&scope=openid' \
+  "${BASE_PUB}/oauth2/token" | jq -r .access_token)
+
+curl -sS -d "token=${TOKEN}" \
+  "${BASE_ADM}/admin/oauth2/introspect" | jq .
+----
+
+Expected: `"active": true`.
+
+=== Issue in one region, introspect in the other
+
+There is only one DNS name per service (the latency-routed record),
+so an unmodified `curl` cannot target a specific region: Route 53
+returns whichever region's NLB IPs are closest to your resolver, and
+*both* the token issue and the introspect land on the same region.
+The test then proves nothing about cross-region replication.
+
+To force each call to a specific region, look up that region's NLB
+IPs and pin the hostname to them with `curl --resolve`. The
+latency-routed record has two ALIAS targets, one per region; query
+them straight from Route 53 (no kubectl needed):
+
+[source,bash]
+----
+ZONE_ID=$(aws route53 list-hosted-zones-by-name --dns-name "${ZONE}." \
+  --query 'HostedZones[0].Id' --output text | sed 's|/hostedzone/||')
+
+# regional NLB DNS for hydra-public
+R1_HP=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+  --query "ResourceRecordSets[?Name=='hydra-public.${SUB}.${ZONE}.' && SetIdentifier=='<region 1>'].AliasTarget.DNSName" \
+  --output text | sed 's/\.$//')
+R2_HA=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+  --query "ResourceRecordSets[?Name=='hydra-admin.${SUB}.${ZONE}.' && SetIdentifier=='<region 2>'].AliasTarget.DNSName" \
+  --output text | sed 's/\.$//')
+
+R1_HP_IP=$(dig +short "$R1_HP"  @8.8.8.8 | head -1)
+R2_HA_IP=$(dig +short "$R2_HA"  @8.8.8.8 | head -1)
+----
+
+(`<region 1>` / `<region 2>` are the literal region strings used as
+`set_identifier` in `aws_route53_global.tf`, e.g. `us-east-1` and
+`us-east-2`.)
+
+Then issue in region 1, introspect in region 2:
+
+[source,bash]
+----
+TOKEN=$(curl -sS \
+  --resolve "hydra-public.${SUB}.${ZONE}:4444:${R1_HP_IP}" \
+  -u "${CID}:${CSEC}" \
+  -d 'grant_type=client_credentials&scope=openid' \
+  "${BASE_PUB}/oauth2/token" | jq -r .access_token)
+
+curl -sS \
+  --resolve "hydra-admin.${SUB}.${ZONE}:4445:${R2_HA_IP}" \
+  -d "token=${TOKEN}" \
+  "${BASE_ADM}/admin/oauth2/introspect" | jq .
+----
+
+Expected: `"active": true`. Three independent properties must line up
+for this to succeed:
+
+. Both regional Hydra deployments share the same `secrets.system` value
+  (pinned via `secret.secretsSystem` in `values_hydra.yaml`, otherwise
+  the chart auto-generates a different random key per region).
+. The token row written into `hydra.hydra_oauth2_access` by region 1's
+  Hydra is readable by region 2's Hydra, which only works if `SHOW
+  REGIONS FROM DATABASE hydra` reports both regions.
+. The HTTP request actually hits the region you intended, which only
+  `--resolve` can guarantee from a single client.
+
+Flip the IPs to test the reverse direction.
+
+=== Confirm which region answered
+
+Add `-w "\nhit=%{remote_ip}\n"` to any `curl` to print the NLB IP that
+served the response, so you can verify the latency policy (or your
+`--resolve`) routed it where you expected:
+
+[source,bash]
+----
+curl -sS -w "\nhit=%{remote_ip}\n" \
+  -u "${CID}:${CSEC}" -d 'grant_type=client_credentials&scope=openid' \
+  "${BASE_PUB}/oauth2/token"
+----
+
+=== Security caveat
+
+The admin ports (`:4445` Hydra, `:4433` Kratos, `:4467` Keto write) are
+publicly reachable and have no authentication. Anyone who can reach
+them can create OAuth2 clients, mutate identities, or write authz
+relations. This is acceptable for a sandbox; for anything beyond, do
+one of:
+
+* Flip `service.admin.type` to `ClusterIP` in the values files and
+  proxy admin traffic via the bastion or a VPN.
+* Put an auth proxy in front (Oathkeeper, ALB OIDC auth, Cloudflare
+  Access).
+* Restrict the admin NLBs' security groups to known CIDRs.
+
+The public-data ports (`:4444` Hydra, `:4434` Kratos, `:4466` Keto
+read) are designed for end-user / app traffic and are fine to expose.
+
+== Testing Kratos from outside (no bastion, no kubectl)
+
+Kratos exposes the same public surface as Hydra: the public API on
+`:4434` is what end-users hit, the admin API on `:4433` is what an
+operator or backend service hits. Both are reachable via the
+latency-routed records. The full identity lifecycle (sign up, log in,
+inspect session, log out) can run from a laptop with only `curl`.
+
+[source,bash]
+----
+export DEPLOY=amine_ory
+export SUB=$(echo "$DEPLOY" | tr '[:upper:]_' '[:lower:]-')
+export ZONE=demo.datacrafterslab.com
+
+KRATOS_PUB="http://kratos-public.${SUB}.${ZONE}:4434"
+----
+
+=== Sign up (registration)
+
+Initialize an API-mode registration flow, then post credentials back to
+the flow's ID. The flow response's `ui.action` URL points at the public
+hostname over HTTPS; we ignore it and post to `${KRATOS_PUB}` directly
+because the deployment serves HTTP only.
+
+[source,bash]
+----
+EMAIL="user-$(date +%s)@example.com"
+PASS='Sup3rS3cr3t!verylong'
+
+FLOW=$(curl -sS "${KRATOS_PUB}/self-service/registration/api")
+FID=$(echo "$FLOW" | jq -r .id)
+
+curl -sS -X POST -H 'Content-Type: application/json' \
+  "${KRATOS_PUB}/self-service/registration?flow=${FID}" \
+  -d "{
+    \"method\":\"password\",
+    \"password\":\"${PASS}\",
+    \"traits\":{
+      \"email\":\"${EMAIL}\",
+      \"name\":{\"first\":\"Demo\",\"last\":\"User\"}
+    }
+  }" | jq '.identity.id, .identity.traits.email'
+----
+
+Registration only creates the identity; the default schema does not
+chain a session. To get a token you must log in.
+
+=== Log in
+
+[source,bash]
+----
+FLOW=$(curl -sS "${KRATOS_PUB}/self-service/login/api")
+FID=$(echo "$FLOW" | jq -r .id)
+
+TOKEN=$(curl -sS -X POST -H 'Content-Type: application/json' \
+  "${KRATOS_PUB}/self-service/login?flow=${FID}" \
+  -d "{
+    \"method\":\"password\",
+    \"identifier\":\"${EMAIL}\",
+    \"password\":\"${PASS}\"
+  }" | jq -r .session_token)
+
+echo "session_token=$TOKEN"
+----
+
+=== Inspect the session (whoami)
+
+[source,bash]
+----
+curl -sS -H "X-Session-Token: ${TOKEN}" \
+  "${KRATOS_PUB}/sessions/whoami" | jq '.active, .identity.traits.email'
+----
+
+Expected: `true` and the email used at sign-up.
+
+=== Log out
+
+[source,bash]
+----
+curl -sS -X DELETE -H 'Content-Type: application/json' \
+  "${KRATOS_PUB}/self-service/logout/api" \
+  -d "{\"session_token\":\"${TOKEN}\"}" -w "HTTP %{http_code}\n"
+
+# whoami should now return 401
+curl -sS -H "X-Session-Token: ${TOKEN}" \
+  "${KRATOS_PUB}/sessions/whoami" -w "\nHTTP %{http_code}\n"
+----
+
+Expected: `HTTP 204` on logout, `HTTP 401` on the follow-up whoami.
+
+=== Log in to one region, validate the session in the other
+
+Same `--resolve` pattern as Hydra. Pin the login to region 1, then run
+whoami pinned to region 2: if `kratos.identities` and `kratos.sessions`
+are properly replicated and both deployments share `secrets.default` +
+`secrets.cookie`, the second call returns `active: true`.
+
+[source,bash]
+----
+HOST="kratos-public.${SUB}.${ZONE}"
+PORT=4434
+ZONE_ID=$(aws route53 list-hosted-zones-by-name --dns-name "${ZONE}." \
+  --query 'HostedZones[0].Id' --output text | sed 's|/hostedzone/||')
+
+R1_KP=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+  --query "ResourceRecordSets[?Name=='${HOST}.' && SetIdentifier=='<region 1>'].AliasTarget.DNSName" \
+  --output text | sed 's/\.$//')
+R2_KP=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+  --query "ResourceRecordSets[?Name=='${HOST}.' && SetIdentifier=='<region 2>'].AliasTarget.DNSName" \
+  --output text | sed 's/\.$//')
+
+R1_KP_IP=$(dig +short "$R1_KP" @8.8.8.8 | head -1)
+R2_KP_IP=$(dig +short "$R2_KP" @8.8.8.8 | head -1)
+
+# log in via region 1
+FLOW=$(curl -sS --resolve "${HOST}:${PORT}:${R1_KP_IP}" \
+  "http://${HOST}:${PORT}/self-service/login/api")
+FID=$(echo "$FLOW" | jq -r .id)
+
+TOKEN=$(curl -sS --resolve "${HOST}:${PORT}:${R1_KP_IP}" \
+  -X POST -H 'Content-Type: application/json' \
+  "http://${HOST}:${PORT}/self-service/login?flow=${FID}" \
+  -d "{\"method\":\"password\",\"identifier\":\"${EMAIL}\",\"password\":\"${PASS}\"}" \
+  | jq -r .session_token)
+
+# validate via region 2
+curl -sS --resolve "${HOST}:${PORT}:${R2_KP_IP}" \
+  -H "X-Session-Token: ${TOKEN}" \
+  "http://${HOST}:${PORT}/sessions/whoami" | jq '.active, .identity.traits.email'
+
+# log out via region 1, then re-check via region 2 (expect 401)
+curl -sS --resolve "${HOST}:${PORT}:${R1_KP_IP}" \
+  -X DELETE -H 'Content-Type: application/json' \
+  "http://${HOST}:${PORT}/self-service/logout/api" \
+  -d "{\"session_token\":\"${TOKEN}\"}" -w "logout HTTP %{http_code}\n"
+
+curl -sS --resolve "${HOST}:${PORT}:${R2_KP_IP}" \
+  -H "X-Session-Token: ${TOKEN}" \
+  "http://${HOST}:${PORT}/sessions/whoami" -w "\nHTTP %{http_code}\n"
+----
+
+Expected: cross-region whoami returns `active: true` with the email,
+then logout returns `204`, then cross-region whoami returns `401`. This
+proves the session is a single global object backed by the multi-region
+`kratos.sessions` table, not two independent per-region copies.
+
+== Testing Keto from outside (no bastion, no kubectl)
+
+Keto's read API (`:4466`) and write API (`:4467`) are both published as
+latency-routed records. Namespaces are declared statically in
+`resources/values_keto.yaml`; the defaults shipped here are
+`default_namespace`, `documents`, and `users`. Any tuple you write must
+reference one of those, otherwise Keto returns
+`404 Unknown namespace`.
+
+[source,bash]
+----
+export DEPLOY=amine_ory
+export SUB=$(echo "$DEPLOY" | tr '[:upper:]_' '[:lower:]-')
+export ZONE=demo.datacrafterslab.com
+
+KETO_WRITE="http://keto-write.${SUB}.${ZONE}:4467"
+KETO_READ="http://keto-read.${SUB}.${ZONE}:4466"
+----
+
+=== Write a relation tuple
+
+[source,bash]
+----
+curl -sS -X PUT -H 'Content-Type: application/json' \
+  "${KETO_WRITE}/admin/relation-tuples" \
+  -d '{
+    "namespace":"documents",
+    "object":"report-2026-q2",
+    "relation":"viewer",
+    "subject_id":"user:alice"
+  }'
+----
+
+Expected: the tuple echoed back as JSON.
+
+=== Check a permission
+
+[source,bash]
+----
+curl -sS "${KETO_READ}/relation-tuples/check?\
+namespace=documents&object=report-2026-q2&relation=viewer&subject_id=user:alice"
+----
+
+Expected: `{"allowed":true}`. A subject without that relation returns
+`{"allowed":false}`.
+
+=== List tuples in a namespace
+
+[source,bash]
+----
+curl -sS "${KETO_READ}/relation-tuples?namespace=documents" | jq .
+----
+
+=== Grant in one region, check in the other
+
+Same `--resolve` pattern. Write the tuple pinned to region 1, then
+check it pinned to region 2. If `keto` is marked
+`SURVIVE ZONE FAILURE` with both regions added, the answer is
+`allowed: true` even though the write never touched region 2 directly.
+
+[source,bash]
+----
+WRITE_HOST="keto-write.${SUB}.${ZONE}"
+READ_HOST="keto-read.${SUB}.${ZONE}"
+ZONE_ID=$(aws route53 list-hosted-zones-by-name --dns-name "${ZONE}." \
+  --query 'HostedZones[0].Id' --output text | sed 's|/hostedzone/||')
+
+R1_KW=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+  --query "ResourceRecordSets[?Name=='${WRITE_HOST}.' && SetIdentifier=='<region 1>'].AliasTarget.DNSName" \
+  --output text | sed 's/\.$//')
+R2_KR=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+  --query "ResourceRecordSets[?Name=='${READ_HOST}.' && SetIdentifier=='<region 2>'].AliasTarget.DNSName" \
+  --output text | sed 's/\.$//')
+
+R1_KW_IP=$(dig +short "$R1_KW" @8.8.8.8 | head -1)
+R2_KR_IP=$(dig +short "$R2_KR" @8.8.8.8 | head -1)
+
+# grant editor on a new object via region 1
+curl -sS --resolve "${WRITE_HOST}:4467:${R1_KW_IP}" \
+  -X PUT -H 'Content-Type: application/json' \
+  "http://${WRITE_HOST}:4467/admin/relation-tuples" \
+  -d '{"namespace":"documents","object":"report-2026-q2","relation":"editor","subject_id":"user:bob"}'
+
+# check via region 2
+curl -sS --resolve "${READ_HOST}:4466:${R2_KR_IP}" \
+  "http://${READ_HOST}:4466/relation-tuples/check?\
+namespace=documents&object=report-2026-q2&relation=editor&subject_id=user:bob"
+----
+
+Expected: `{"allowed":true}` from the region-2 read after a single
+region-1 write.
+
+== Troubleshooting
+
+CLB quota exceeded (`AccountLimitException: Exceeded quota of account ...`)::
+  Default account quota for Classic Load Balancers is 20 per region.
+  All Ory services here are annotated as NLB to avoid this. If you
+  switch a service back to CLB and hit the limit, request a quota
+  raise or delete unused CLBs.
+
+Bastion never finishes Helm install / istio Job stays Running::
+  The Ory Helm charts use Kubernetes Jobs for migrations. The Istio
+  sidecar in those Jobs keeps `istio-proxy` running after the main
+  container completes, which blocks `helm install --wait`. Either
+  annotate the Job templates with `sidecar.istio.io/inject: "false"`,
+  or run a watcher that kills `istio-proxy` once the main container
+  reports `Completed`.
+
+`SHOW REGIONS FROM CLUSTER` lists only one region::
+  Cluster init didn't finish before region 2's bastion came up, or the
+  cluster join list was wrong. Check `module.crdb-cluster-N.cluster_join_ips`
+  is `concat(module.crdb-cluster-1.cr-private-ips, module.crdb-cluster-2.cr-private-ips)`
+  in both region files.
+
+Cross-region token introspect returns `{"active": false}`::
+  The two regions have different `secretsSystem` values. Confirm with
+  `kubectl --context r{1,2} -n ory get secret ory-hydra -o jsonpath='{.data.secretsSystem}' | base64 -d`.
+  If they differ, the values file is missing the top-level
+  `secret.secretsSystem` key (the chart's auto-generated value wins over
+  `hydra.config.secrets.system`).
+
+Route 53 record creation fails with `already exists`::
+  A previous partial apply left the record in place. Import it:
+  `terraform import 'aws_route53_record.crdb_r1' '<zone-id>_crdb.<sub>.<zone>_A_<region>'`.
+
+`terraform plan` wants to replace EKS / CRDB nodes / bastions after a
+rename commit::
+  Resource name changes (e.g. infix `mr-r{N}` → `region{N}`) cascade
+  through `cluster_name`, `key_name`, security group rules, etc. and
+  force-replace. Either accept the replace, or `terraform state mv` the
+  affected resources before applying.
+
+Operator missing `istioctl`::
+  `null_resource.istio_remote_secret_*` runs `istioctl create-remote-secret`
+  via a local-exec. Install with
+  `curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.22.0 sh -`
+  and put the binary on `PATH` before applying.
+
+== Single-region regression
+
+The single-region stack at `main/aws/Single-Region-Multi-AZ` is
+untouched. All `modules/aws/bastion` changes are gated by variables
+whose defaults preserve the original behavior.
+
+[source,bash]
+----
+cd main/aws/Single-Region-Multi-AZ
+terraform plan   # expects zero changes
+----
+
+== Teardown
+
+[source,bash]
+----
+# Optional: delete leftover Ory NLBs first so EKS deletion doesn't hang
+# on dangling ENIs.
+for ctx in r1 r2; do
+  kubectl --context $ctx -n ory delete svc \
+    ory-hydra-public ory-hydra-admin \
+    ory-kratos-public ory-kratos-admin \
+    ory-keto-read ory-keto-write --ignore-not-found
+done
+
+cd main/aws/Multi-Region/Multi_Zonal_Clusters
+terraform destroy -var-file=terraform.tfvars
+----
+
+== Open items / future work
+
+* TLS termination on the Ory service ports (wildcard ACM + Istio
+  ingress gateway or ALB Ingress Controller).
+* Witness region: add a single CRDB node in a third location so writes
+  survive a full-region loss.
+* Hydra / Kratos UI: only the APIs are deployed today. Wire the
+  `kratos-selfservice-ui-node` chart (or your own UI) into the mesh and
+  add a corresponding latency-routed DNS record.
+* Per-table locality tuning: `REGIONAL BY ROW` for session-bearing
+  tables, `GLOBAL` for config/read-mostly tables. Defaults today are
+  `REGIONAL BY TABLE` in the primary region.
