@@ -241,23 +241,15 @@ CAKEY
     --from-file=root-cert.pem=/home/${var.ssh_user}/ca-cert.pem \
     --from-file=cert-chain.pem=/home/${var.ssh_user}/ca-cert.pem \
     --dry-run=client -o yaml | kubectl apply -f -" >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  cat > /home/${var.ssh_user}/istio-config.yaml <<EOC
-apiVersion: install.istio.io/v1alpha1
-kind: IstioOperator
-spec:
-  values:
-    global:
-      meshID: ory-mesh
-      multiCluster:
-        clusterName: ${var.istio_cluster_name}
-      network: ${var.istio_network_name}
-EOC
+  sudo sed -i "s@\$${MESH_ID}@${var.istio_mesh_id}@"        /home/${var.ssh_user}/istio-config.yaml
+  sudo sed -i "s@\$${CLUSTER_NAME}@${var.istio_cluster_name}@" /home/${var.ssh_user}/istio-config.yaml
+  sudo sed -i "s@\$${NETWORK_NAME}@${var.istio_network_name}@" /home/${var.ssh_user}/istio-config.yaml
   sudo chown ${var.ssh_user}:${var.ssh_user} /home/${var.ssh_user}/istio-config.yaml
   sudo -H -u ${var.ssh_user} bash -c "istioctl install --skip-confirmation -f /home/${var.ssh_user}/istio-config.yaml" >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - ⏳ Waiting for istiod to be ready before installing east-west gateway" >> /home/${var.ssh_user}/prepare_client.log
   sudo -H -u ${var.ssh_user} bash -c "kubectl rollout status deploy/istiod -n istio-system --timeout=300s" >> /home/${var.ssh_user}/prepare_client.log 2>&1
   sudo -H -u ${var.ssh_user} bash -c "kubectl wait --for=condition=Available deploy/istiod -n istio-system --timeout=300s" >> /home/${var.ssh_user}/prepare_client.log 2>&1
-  sudo -H -u ${var.ssh_user} bash -c "/home/${var.ssh_user}/istio-$ISTIO_VERSION/samples/multicluster/gen-eastwest-gateway.sh --mesh ory-mesh --cluster ${var.istio_cluster_name} --network ${var.istio_network_name} | istioctl install -y -f -" >> /home/${var.ssh_user}/prepare_client.log 2>&1
+  sudo -H -u ${var.ssh_user} bash -c "/home/${var.ssh_user}/istio-$ISTIO_VERSION/samples/multicluster/gen-eastwest-gateway.sh --mesh ${var.istio_mesh_id} --cluster ${var.istio_cluster_name} --network ${var.istio_network_name} | istioctl install -y -f -" >> /home/${var.ssh_user}/prepare_client.log 2>&1
   echo "$(date) - 🩹 Forcing explicit proxy image on istio-eastwestgateway (works around 'image: auto' webhook race)" >> /home/${var.ssh_user}/prepare_client.log
   for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
     if sudo -H -u ${var.ssh_user} bash -c "kubectl get deployment istio-eastwestgateway -n istio-system" >/dev/null 2>&1; then break; fi

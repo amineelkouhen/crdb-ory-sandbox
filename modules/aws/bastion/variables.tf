@@ -229,6 +229,12 @@ variable "istio_root_ca_key" {
   sensitive   = true
 }
 
+variable "istio_mesh_id" {
+  description = "Logical Istio meshID. Must be identical across all clusters that should form one mesh. Only consumed when multi_region = true."
+  type        = string
+  default     = "ory-mesh"
+}
+
 variable "istio_cluster_name" {
   description = "Logical Istio cluster name for this region (e.g. mumbai). Used by istioctl install --set values.global.multiCluster.clusterName."
   type        = string
