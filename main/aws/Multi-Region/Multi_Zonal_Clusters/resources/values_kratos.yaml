@@ -23,6 +23,10 @@ service:
 secret:
   secretsDefault: ${KRATOS_DEFAULT_SECRET}
   secretsCookie: ${KRATOS_COOKIE_SECRET}
+job:
+  podMetadata:
+    annotations:
+      sidecar.istio.io/inject: "false"
 kratos:
   development: true
   automigration:
